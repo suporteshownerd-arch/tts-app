@@ -1,1 +1,4 @@
 edge-tts
+pystray
+Pillow
+langdetect

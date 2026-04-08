@@ -1,5 +1,6 @@
 """Utilitários mínimos para montar comandos TTS e checar dependências."""
 from typing import List, Dict, Optional, Tuple
+import re
 import shutil
 import subprocess
 import asyncio
@@ -98,3 +99,71 @@ def list_voices(locale_filter: Optional[str] = None) -> list:
     except Exception:
         logger.exception("Failed to list voices")
         return []
+
+
+def split_text(text: str, max_chars: int = 4500) -> List[str]:
+    """Divide texto longo em chunks no limite de frases.
+
+    Evita cortar no meio de uma frase. Retorna lista com um item se
+    o texto couber em max_chars.
+    """
+    if len(text) <= max_chars:
+        return [text]
+
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    chunks: List[str] = []
+    current = ""
+
+    for sentence in sentences:
+        if len(current) + len(sentence) + 1 <= max_chars:
+            current = (current + " " + sentence).strip()
+        else:
+            if current:
+                chunks.append(current)
+            if len(sentence) > max_chars:
+                for i in range(0, len(sentence), max_chars):
+                    chunks.append(sentence[i:i + max_chars])
+                current = ""
+            else:
+                current = sentence
+
+    if current:
+        chunks.append(current)
+
+    return chunks
+
+
+def generate_audio_long(voice: str, rate: int, text: str, output_path: Optional[str] = None) -> Tuple[int, str]:
+    """Gera áudio para textos longos dividindo em chunks e concatenando com ffmpeg."""
+    chunks = split_text(text)
+    if len(chunks) == 1:
+        return generate_audio(voice, rate, text, output_path)
+
+    tmp_files: List[str] = []
+    try:
+        for chunk in chunks:
+            rc, tmp = generate_audio(voice, rate, chunk, None)
+            if rc != 0:
+                return rc, ""
+            tmp_files.append(tmp)
+
+        # Concatenar com ffmpeg
+        if not output_path:
+            fd, output_path = tempfile.mkstemp(suffix=".mp3")
+            os.close(fd)
+
+        list_file = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False)
+        for f in tmp_files:
+            list_file.write(f"file '{f}'\n")
+        list_file.close()
+
+        cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_file.name, "-c", "copy", output_path]
+        proc = subprocess.run(cmd, stderr=subprocess.DEVNULL)
+        os.unlink(list_file.name)
+        return proc.returncode, output_path
+    finally:
+        for f in tmp_files:
+            try:
+                os.remove(f)
+            except Exception:
+                pass
