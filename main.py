@@ -278,7 +278,20 @@ class VozSelector(tk.Frame):
                       insertbackground=T("ACCENT2"), relief="flat", font=("Segoe UI",10))
         fe.pack(fill="x", padx=6, pady=4)
         tk.Frame(outer, bg=T("ACCENT"), height=1).pack(fill="x")
-        lf = tk.Frame(outer, bg=T("BG2")); lf.pack(fill="both", expand=True)
+
+        # Canvas + Scrollbar para lista longa de vozes
+        cf = tk.Frame(outer, bg=T("BG2")); cf.pack(fill="both", expand=True)
+        sb = tk.Scrollbar(cf, orient="vertical", bg=T("BG2")); sb.pack(side="right", fill="y")
+        canvas = tk.Canvas(cf, bg=T("BG2"), bd=0, highlightthickness=0, yscrollcommand=sb.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        sb.config(command=canvas.yview)
+        lf = tk.Frame(canvas, bg=T("BG2"))
+        cw = canvas.create_window((0, 0), window=lf, anchor="nw")
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(cw, width=e.width))
+        lf.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Button-4>", lambda e: canvas.yview_scroll(-1, "units"))
+        canvas.bind("<Button-5>", lambda e: canvas.yview_scroll(1, "units"))
+
         def render(ft=""):
             for c in lf.winfo_children(): c.destroy()
             filtered = [v for v in self.values if ft.lower() in v.lower()]
@@ -290,7 +303,7 @@ class VozSelector(tk.Frame):
                           relief="flat", anchor="w", padx=12, pady=4, cursor="hand2",
                           activebackground=T("ACCENT"), activeforeground="white",
                           command=make(v)).pack(fill="x")
-            self.popup.geometry(f"{w}x{min(len(filtered)*32+100,280)}+{x}+{y}")
+            self.popup.geometry(f"{w}x{min(len(filtered)*32+100,320)}+{x}+{y}")
         filter_var.trace_add("write", lambda *_: render(filter_var.get()))
         render()
         self.popup.bind("<FocusOut>", lambda e: self.popup.destroy() if self.popup and self.popup.winfo_exists() else None)
