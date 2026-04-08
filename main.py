@@ -469,6 +469,7 @@ tk.Label(root, textvariable=status_var, font=("Segoe UI", 9), bg=BG, fg=GREEN).p
 root.bind("<Control-Return>", falar)
 root.bind("<Control-s>", salvar)
 root.bind("<Escape>", lambda e: parar())
+root.bind("<Control-o>", lambda e: abrir_txt())
 
 # 8. Checar deps uma vez na inicialização
 _check_deps_startup()
