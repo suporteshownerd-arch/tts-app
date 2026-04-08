@@ -2,7 +2,7 @@
 
 ## Visão Geral
 
-Aplicativo desktop para Linux que converte texto em fala (Text-to-Speech) usando a engine Microsoft Edge TTS. Interface gráfica simples e moderna, sem necessidade de conta ou API key.
+ Aplicativo desktop para Linux que converte texto em fala (Text-to-Speech) usando a engine Microsoft Edge TTS. Interface gráfica simples e moderna; não requer conta ou API key, porém requer conexão com a internet para acessar o serviço online.
 
 ---
 
@@ -104,7 +104,7 @@ Usuário digita texto
 | Requisito      | Critério                                                    |
 | -------------- | ----------------------------------------------------------- |
 | Plataforma     | Linux (Ubuntu/Debian e derivados)                           |
-| Performance    | Áudio gerado em menos de 3s para textos curtos (<200 chars) |
+ | Performance    | Áudio gerado em menos de 5s para textos curtos (<200 chars) *medido em máquina de referência com conexão padrão* |
 | Confiabilidade | Fallback CLI quando API Python não disponível               |
 | Testabilidade  | Cobertura de testes em `tts_utils.py` via pytest + CI       |
 | Instalação     | Funcional com `make install && make run`                    |
@@ -113,7 +113,7 @@ Usuário digita texto
 
 ## Critérios de Aceite (v1.0)
 
-- [ ] Usuário consegue ouvir um texto em menos de 5 segundos após clicar "Falar"
+- [ ] Usuário consegue ouvir um texto em menos de 5 segundos após clicar "Falar" (para textos <200 chars em máquina de referência)
 - [ ] Usuário consegue salvar o áudio em MP3 em qualquer pasta
 - [ ] App exibe mensagem de erro clara se `edge-tts` ou `ffplay` não estiver instalado
 - [ ] Testes passam no CI (GitHub Actions)

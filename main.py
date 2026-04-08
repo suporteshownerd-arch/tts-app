@@ -34,13 +34,14 @@ def falar():
     btn_falar.config(state="disabled", text="⏳  Gerando áudio...")
     status_var.set("🔊 Falando...")
     def run():
-        out = DEFAULT_TMP_FILE
+        out = None if DEFAULT_TMP_FILE is None else DEFAULT_TMP_FILE
         # try to generate audio (prefer API when available)
         try:
-            rc = generate_audio(voz, velocidade, texto, out)
+            rc, out_path = generate_audio(voz, velocidade, texto, out)
         except Exception:
             logging.exception("generate_audio failed")
             rc = 1
+            out_path = out or "/tmp/tts_saida.mp3"
 
         if rc != 0:
             # schedule UI update on main thread
@@ -48,13 +49,19 @@ def falar():
             return
 
         # play file (ignore stderr from ffplay - it's verbose)
-        play_cmd = build_play_cmd(out)
+        play_cmd = build_play_cmd(out_path)
         play = subprocess.run(play_cmd, stderr=subprocess.DEVNULL)
         # update UI on main thread
         if play.returncode == 0:
             root.after(0, lambda: [btn_falar.config(state="normal", text="▶   Falar"), status_var.set("✅ Pronto!")])
         else:
             root.after(0, lambda: [btn_falar.config(state="normal", text="▶   Falar"), status_var.set("⚠️ Reprodução falhou")])
+        # cleanup temporary file if any and not user-specified
+        try:
+            if DEFAULT_TMP_FILE is None and out_path and out_path.startswith("/tmp"):
+                os.remove(out_path)
+        except Exception:
+            logging.exception("Failed to remove temp audio file: %s", out_path)
     threading.Thread(target=run, daemon=True).start()
 
 def salvar():

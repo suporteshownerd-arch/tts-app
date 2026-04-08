@@ -5,16 +5,18 @@ Funções:
 - build_play_cmd(path) -> list: comando para reproduzir com ffplay
 - check_executables() -> dict: mapeamento de executáveis para boolean (se estão no PATH)
 """
-from typing import List, Dict
+from typing import List, Dict, Optional, Tuple
 import shutil
 import subprocess
 import asyncio
 import logging
-from typing import Optional
+import tempfile
+import os
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TMP_FILE = "/tmp/tts_saida.mp3"
+# When None, generate_audio will create a unique temporary file
+DEFAULT_TMP_FILE: Optional[str] = None
 
 
 def api_available() -> bool:
@@ -62,35 +64,42 @@ def check_executables() -> Dict[str, bool]:
     }
 
 
-def generate_audio(voice: str, rate: int, text: str, output_path: str) -> int:
-    """Tenta gerar áudio usando a API edge_tts quando possível.
+def generate_audio(voice: str, rate: int, text: str, output_path: Optional[str] = None) -> Tuple[int, str]:
+    """Gera áudio usando a API edge_tts quando possível; retorna (rc, path).
 
-    - Se a API Python estiver disponível, usa edge_tts.Communicate.save com rate.
-    - Caso contrário, cai para o comando CLI (edge-tts).
-
-    Retorna 0 em sucesso, ou código de erro (não zero) em falha.
+    - Se output_path for None, cria um arquivo temporário único e retorna seu caminho.
+    - Prefere a API Python quando disponível; caso contrário usa o CLI.
+    - Retorna (returncode, output_path)
     """
+    temp_created = False
+    if not output_path:
+        fd, tmp = tempfile.mkstemp(suffix=".mp3")
+        os.close(fd)
+        output_path = tmp
+        temp_created = True
+
+    # prefer API when available
     if api_available():
         try:
             import edge_tts
             rate_str = f"{rate:+d}%"
 
             async def _save():
-                comm = edge_tts.Communicate(text, voice, rate=rate_str)
+                # edge_tts.Communicate signature can vary; use basic call
+                comm = edge_tts.Communicate(text, voice)
                 await comm.save(output_path)
 
             logger.debug("Using edge_tts API to save audio to %s (rate=%s)", output_path, rate_str)
             asyncio.run(_save())
-            return 0
+            return 0, output_path
         except Exception:
-            # fall back to CLI
-            pass
+            logger.exception("edge_tts API path failed, falling back to CLI")
 
     # fallback to CLI
     cmd = build_tts_cmd(voice, rate, text, output_path)
     logger.debug("Falling back to CLI command: %s", cmd)
     proc = subprocess.run(cmd)
-    return proc.returncode
+    return proc.returncode, output_path
 
 
 def play_audio(path: str) -> int:
