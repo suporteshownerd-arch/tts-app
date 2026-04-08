@@ -266,6 +266,8 @@ class VozSelector(tk.Frame):
         self.popup = tk.Toplevel(); self.popup.wm_overrideredirect(True); self.popup.configure(bg=T("BG2"))
         outer = tk.Frame(self.popup, bg=T("BG2"), highlightthickness=1, highlightbackground=T("ACCENT"))
         outer.pack(fill="both", expand=True)
+
+        # Abas de idioma
         tabs = tk.Frame(outer, bg=T("BG2")); tabs.pack(fill="x", padx=4, pady=(4,0))
         filter_var = tk.StringVar()
         for lang, label in zip(LANG_TABS, LANG_LABELS):
@@ -274,47 +276,51 @@ class VozSelector(tk.Frame):
                       activebackground=T("ACCENT"), activeforeground="white",
                       command=lambda l=lang: filter_var.set(l)).pack(side="left", padx=1)
         tk.Frame(outer, bg=T("ACCENT"), height=1).pack(fill="x", pady=(4,0))
+
+        # Campo de busca
         fe = tk.Entry(outer, textvariable=filter_var, bg=T("BG2"), fg=T("TEXT"),
                       insertbackground=T("ACCENT2"), relief="flat", font=("Segoe UI",10))
         fe.pack(fill="x", padx=6, pady=4)
         tk.Frame(outer, bg=T("ACCENT"), height=1).pack(fill="x")
 
-        # Canvas + Scrollbar para lista longa de vozes
-        cf = tk.Frame(outer, bg=T("BG2")); cf.pack(fill="both", expand=True)
-        sb = tk.Scrollbar(cf, orient="vertical", bg=T("BG2")); sb.pack(side="right", fill="y")
-        canvas = tk.Canvas(cf, bg=T("BG2"), bd=0, highlightthickness=0, yscrollcommand=sb.set)
-        canvas.pack(side="left", fill="both", expand=True)
-        sb.config(command=canvas.yview)
-        lf = tk.Frame(canvas, bg=T("BG2"))
-        cw = canvas.create_window((0, 0), window=lf, anchor="nw")
-        canvas.bind("<Configure>", lambda e: canvas.itemconfig(cw, width=e.width))
-        lf.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.bind("<Button-4>", lambda e: canvas.yview_scroll(-1, "units"))
-        canvas.bind("<Button-5>", lambda e: canvas.yview_scroll(1, "units"))
+        # Listbox com scrollbar nativo — sem problemas de FocusOut
+        lf = tk.Frame(outer, bg=T("BG2")); lf.pack(fill="both", expand=True)
+        sb = tk.Scrollbar(lf); sb.pack(side="right", fill="y")
+        lb = tk.Listbox(lf, bg=T("BG2"), fg=T("TEXT"), selectbackground=T("ACCENT"),
+                        selectforeground="white", font=("Segoe UI",10), relief="flat",
+                        bd=0, highlightthickness=0, activestyle="none",
+                        yscrollcommand=sb.set)
+        lb.pack(side="left", fill="both", expand=True)
+        sb.config(command=lb.yview)
+        lb.bind("<MouseWheel>", lambda e: lb.yview_scroll(int(-1*(e.delta/120)), "units"))
+
+        _filtered = []
 
         def render(ft=""):
-            for c in lf.winfo_children(): c.destroy()
-            filtered = [v for v in self.values if ft.lower() in v.lower()]
-            for v in filtered:
-                def make(val):
-                    def cmd(): self.variable.set(val); self.popup.destroy(); self.popup = None
-                    return cmd
-                tk.Button(lf, text=v, bg=T("BG2"), fg=T("TEXT"), font=("Segoe UI",10),
-                          relief="flat", anchor="w", padx=12, pady=4, cursor="hand2",
-                          activebackground=T("ACCENT"), activeforeground="white",
-                          command=make(v)).pack(fill="x")
-            self.popup.geometry(f"{w}x{min(len(filtered)*32+100,320)}+{x}+{y}")
+            lb.delete(0, tk.END)
+            _filtered.clear()
+            for v in self.values:
+                if ft.lower() in v.lower():
+                    _filtered.append(v)
+                    lb.insert(tk.END, v)
+            self.popup.geometry(f"{w}x{min(len(_filtered)*20+100,320)}+{x}+{y}")
+
+        def on_select(e):
+            sel = lb.curselection()
+            if not sel: return
+            self.variable.set(_filtered[sel[0]])
+            self.popup.destroy(); self.popup = None
+
+        lb.bind("<<ListboxSelect>>", on_select)
+        lb.bind("<Return>", on_select)
         filter_var.trace_add("write", lambda *_: render(filter_var.get()))
         render()
-        def _maybe_close():
-            if not (self.popup and self.popup.winfo_exists()):
-                return
-            focused = str(self.popup.focus_get() or "")
-            if not focused.startswith(str(self.popup)):
-                self.popup.destroy()
-                self.popup = None
 
-        self.popup.bind("<FocusOut>", lambda e: self.popup.after(100, _maybe_close))
+        # Fechar ao clicar fora
+        self.popup.bind("<FocusOut>", lambda e: self.popup.after(150, lambda:
+            self.popup.destroy() or setattr(self, "popup", None)
+            if self.popup and self.popup.winfo_exists()
+            and self.popup.focus_get() is None else None))
         fe.focus_set()
 
 # ── Janela ────────────────────────────────────────────────────────────────────
