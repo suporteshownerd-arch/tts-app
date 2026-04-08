@@ -39,9 +39,9 @@ def test_generate_audio_uses_api_with_rate():
 
     with patch("tts_utils.api_available", return_value=True), \
          patch.dict("sys.modules", {"edge_tts": fake_edge_tts}):
-        result = generate_audio("pt-BR-FranciscaNeural", 25, "Olá", "/tmp/out.mp3")
+        rc, path = generate_audio("pt-BR-FranciscaNeural", 25, "Olá", "/tmp/out.mp3")
 
-    assert result == 0
+    assert rc == 0
     mock_communicate.assert_called_once_with("Olá", "pt-BR-FranciscaNeural", rate="+25%")
 
 
@@ -54,7 +54,7 @@ def test_generate_audio_api_rate_zero():
 
     with patch("tts_utils.api_available", return_value=True), \
          patch.dict("sys.modules", {"edge_tts": fake_edge_tts}):
-        result = generate_audio("pt-BR-FranciscaNeural", 0, "Olá", "/tmp/out.mp3")
+        rc, path = generate_audio("pt-BR-FranciscaNeural", 0, "Olá", "/tmp/out.mp3")
 
-    assert result == 0
+    assert rc == 0
     mock_communicate.assert_called_once_with("Olá", "pt-BR-FranciscaNeural", rate="+0%")

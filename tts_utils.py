@@ -85,8 +85,9 @@ def generate_audio(voice: str, rate: int, text: str, output_path: Optional[str] 
             rate_str = f"{rate:+d}%"
 
             async def _save():
-                # edge_tts.Communicate signature can vary; use basic call
-                comm = edge_tts.Communicate(text, voice)
+                rate_str = f"{rate:+d}%"
+                # Call Communicate with rate when available
+                comm = edge_tts.Communicate(text, voice, rate=rate_str)
                 await comm.save(output_path)
 
             logger.debug("Using edge_tts API to save audio to %s (rate=%s)", output_path, rate_str)
