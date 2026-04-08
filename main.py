@@ -2,6 +2,9 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import subprocess
 import threading
+import shutil
+import logging
+from tts_utils import build_tts_cmd, build_play_cmd, check_executables, generate_audio, DEFAULT_TMP_FILE
 import os
 
 BG = "#1e1e2e"
@@ -19,14 +22,40 @@ def falar():
     if not texto:
         messagebox.showwarning("Aviso", "Digite algum texto primeiro!")
         return
+    # check required executables
+    ex = check_executables()
+    if not ex["edge-tts"]:
+        messagebox.showerror("Erro", "Executável 'edge-tts' não encontrado. Instale via 'pipx install edge-tts' ou no seu PATH.")
+        return
+    if not ex["ffplay"]:
+        messagebox.showerror("Erro", "Executável 'ffplay' (ffmpeg) não encontrado. Instale 'ffmpeg' no seu sistema.")
+        return
+
     btn_falar.config(state="disabled", text="⏳  Gerando áudio...")
     status_var.set("🔊 Falando...")
     def run():
-        subprocess.run(["edge-tts","--voice", voz,"--rate", f"{velocidade:+d}%","--text", texto,"--write-media", "/tmp/tts_saida.mp3"])
-        subprocess.run(["ffplay", "-nodisp", "-autoexit", "/tmp/tts_saida.mp3"], stderr=subprocess.DEVNULL)
-        btn_falar.config(state="normal", text="▶   Falar")
-        status_var.set("✅ Pronto!")
-    threading.Thread(target=run).start()
+        out = DEFAULT_TMP_FILE
+        # try to generate audio (prefer API when available)
+        try:
+            rc = generate_audio(voz, velocidade, texto, out)
+        except Exception:
+            logging.exception("generate_audio failed")
+            rc = 1
+
+        if rc != 0:
+            # schedule UI update on main thread
+            root.after(0, lambda: [btn_falar.config(state="normal", text="▶   Falar"), status_var.set("❌ Falha ao gerar áudio"), messagebox.showerror("Erro", "Falha ao gerar áudio com edge-tts")])
+            return
+
+        # play file (ignore stderr from ffplay - it's verbose)
+        play_cmd = build_play_cmd(out)
+        play = subprocess.run(play_cmd, stderr=subprocess.DEVNULL)
+        # update UI on main thread
+        if play.returncode == 0:
+            root.after(0, lambda: [btn_falar.config(state="normal", text="▶   Falar"), status_var.set("✅ Pronto!")])
+        else:
+            root.after(0, lambda: [btn_falar.config(state="normal", text="▶   Falar"), status_var.set("⚠️ Reprodução falhou")])
+    threading.Thread(target=run, daemon=True).start()
 
 def salvar():
     texto = text_box.get("1.0", tk.END).strip()
@@ -38,11 +67,20 @@ def salvar():
     path = filedialog.asksaveasfilename(defaultextension=".mp3", filetypes=[("MP3", "*.mp3")], initialfile="audio.mp3")
     if not path:
         return
+    ex = check_executables()
+    if not ex["edge-tts"]:
+        messagebox.showerror("Erro", "Executável 'edge-tts' não encontrado. Instale via 'pipx install edge-tts' ou no seu PATH.")
+        return
+
     status_var.set("💾 Salvando...")
     def run():
-        subprocess.run(["edge-tts","--voice", voz,"--rate", f"{velocidade:+d}%","--text", texto,"--write-media", path])
-        status_var.set(f"✅ Salvo em {os.path.basename(path)}")
-    threading.Thread(target=run).start()
+        res_cmd = build_tts_cmd(voz, velocidade, texto, path)
+        res = subprocess.run(res_cmd)
+        if res.returncode == 0:
+            root.after(0, lambda: status_var.set(f"✅ Salvo em {os.path.basename(path)}"))
+        else:
+            root.after(0, lambda: [status_var.set("❌ Falha ao salvar"), messagebox.showerror("Erro", "Falha ao gerar o arquivo de áudio com edge-tts")])
+    threading.Thread(target=run, daemon=True).start()
 
 def limpar():
     text_box.delete("1.0", tk.END)
