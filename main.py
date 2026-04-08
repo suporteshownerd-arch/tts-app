@@ -73,7 +73,51 @@ def toggle_theme():
             f.write(new)
     except Exception:
         logging.exception("Failed to write theme file")
-    messagebox.showinfo("Tema", "Tema alterado para %s. Reinicie o app para aplicar." % new)
+    set_theme(new)
+
+
+def set_theme(theme: str):
+    """Apply theme dynamically to major widgets."""
+    # Define palettes
+    palettes = {
+        "dark": {
+            "BG": "#1e1e2e", "BG2": "#2a2a3e", "ACCENT": "#7c3aed", "ACCENT2": "#a855f7",
+            "TEXT": "#e2e8f0", "TEXT2": "#94a3b8", "GREEN": "#22c55e", "RED": "#dc2626",
+        },
+        "light": {
+            "BG": "#f8fafc", "BG2": "#eef2ff", "ACCENT": "#2563eb", "ACCENT2": "#1e40af",
+            "TEXT": "#0f172a", "TEXT2": "#475569", "GREEN": "#16a34a", "RED": "#dc2626",
+        }
+    }
+    pal = palettes.get(theme, palettes["dark"])
+
+    # Update global constants used elsewhere
+    global BG, BG2, ACCENT, ACCENT2, TEXT, TEXT2, GREEN, RED
+    BG = pal["BG"]; BG2 = pal["BG2"]; ACCENT = pal["ACCENT"]; ACCENT2 = pal["ACCENT2"]
+    TEXT = pal["TEXT"]; TEXT2 = pal["TEXT2"]; GREEN = pal["GREEN"]; RED = pal["RED"]
+
+    # Walk widgets and update common options
+    def apply_rec(widget):
+        # Frame
+        try:
+            cls = widget.winfo_class()
+            if cls in ("Frame", "TFrame"):
+                widget.configure(bg=BG)
+            elif cls in ("Label", "TLabel"):
+                widget.configure(bg=BG, fg=TEXT)
+            elif cls == "Button":
+                # don't override special button colors
+                widget.configure(bg=BG2, fg=TEXT)
+            elif cls == "Text":
+                widget.configure(bg=BG2, fg=TEXT, insertbackground=ACCENT2)
+            elif cls == "Scale":
+                widget.configure(bg=BG)
+        except Exception:
+            pass
+        for child in widget.winfo_children():
+            apply_rec(child)
+
+    apply_rec(root)
 
 
 def _check_deps_startup():
@@ -343,6 +387,22 @@ tk.Button(
     bg=BG2, fg=TEXT2, font=("Segoe UI", 8), relief="flat",
     cursor="hand2", padx=6, pady=0, activebackground=BG2, activeforeground=ACCENT2,
 ).pack(side="right")
+
+# B3: Botão Abrir .txt
+def abrir_txt():
+    path = filedialog.askopenfilename(filetypes=[("Text files", "*.txt")])
+    if not path:
+        return
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+        text_box.delete("1.0", tk.END)
+        text_box.insert("1.0", content)
+        _atualizar_contador()
+    except Exception:
+        logging.exception("Failed to open txt file")
+
+tk.Button(text_header, text="📂 Abrir", command=abrir_txt, bg=BG2, fg=TEXT2, font=("Segoe UI", 8), relief="flat", cursor="hand2").pack(side="right", padx=(0,6))
 
 text_box = tk.Text(
     text_frame, height=8, font=("Segoe UI", 11), bg=BG2, fg=TEXT,
