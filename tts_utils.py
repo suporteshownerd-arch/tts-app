@@ -176,15 +176,27 @@ def split_text(text: str, max_chars: int = 4500) -> List[str]:
     return chunks
 
 
-def generate_audio_long(voice: str, rate: int, text: str, output_path: Optional[str] = None) -> Tuple[int, str]:
-    """Gera áudio para textos longos dividindo em chunks e concatenando com ffmpeg."""
+def generate_audio_long(
+    voice: str, rate: int, text: str,
+    output_path: Optional[str] = None,
+    progress_callback=None,
+) -> Tuple[int, str]:
+    """Gera áudio para textos longos dividindo em chunks e concatenando com ffmpeg.
+
+    progress_callback(current: int, total: int) é chamado antes de cada chunk.
+    """
     chunks = split_text(text)
     if len(chunks) == 1:
         return generate_audio(voice, rate, text, output_path)
 
     tmp_files: List[str] = []
     try:
-        for chunk in chunks:
+        for i, chunk in enumerate(chunks, 1):
+            if progress_callback:
+                try:
+                    progress_callback(i, len(chunks))
+                except Exception:
+                    pass
             rc, tmp = generate_audio(voice, rate, chunk, None)
             if rc != 0:
                 return rc, ""
