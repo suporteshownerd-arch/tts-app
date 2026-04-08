@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=TTS App
+GenericName=Text to Speech
+Comment=Converta texto em voz natural
+Exec=/opt/tts-app/run.sh
+Icon=/opt/tts-app/assets/tts-app.svg
+Terminal=false
+Categories=Utility;Accessibility;Audio;
+Keywords=tts;voz;fala;texto;speech;
+StartupNotify=true
