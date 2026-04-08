@@ -1,0 +1,94 @@
+name: Release Artifacts
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build-and-upload:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Gather metadata
+      run: |
+        echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+
+    - name: Create tar.gz artifact
+      run: |
+        mkdir -p dist
+        tar --exclude-vcs --exclude='.venv' -czf dist/tts-app-${VERSION}.tar.gz .
+
+    - name: Build .deb package
+      run: |
+        set -e
+        PKG=tts-app
+        VERSION=${VERSION}
+        BUILD=build/deb
+        rm -rf $BUILD && mkdir -p $BUILD/DEBIAN
+        mkdir -p $BUILD/opt/$PKG
+        rsync -a --exclude=.git --exclude=.venv --exclude=build --exclude=dist ./ $BUILD/opt/$PKG/
+        printf 'Package: %s\nVersion: %s\nSection: utils\nPriority: optional\nArchitecture: amd64\nMaintainer: TTS App <noreply@example.com>\nDescription: Simple TTS desktop app\n' "$PKG" "$VERSION" > $BUILD/DEBIAN/control
+        dpkg-deb --build $BUILD dist/$PKG-${VERSION}.deb
+
+    - name: Prepare AppDir for AppImage
+      run: |
+        set -e
+        APPDIR=build/appdir
+        rm -rf $APPDIR
+        mkdir -p $APPDIR/usr/bin
+        mkdir -p $APPDIR/usr/share/applications
+        mkdir -p $APPDIR/usr/share/icons/hicolor/256x256/apps
+        rsync -a --exclude=.git --exclude=.venv --exclude=build --exclude=dist ./ $APPDIR/usr/bin/tts-app
+        # simple launcher
+        printf '#!/bin/bash\nBASEDIR=$(dirname "$0")\npython3 "$BASEDIR/usr/bin/tts-app/main.py"\n' > $APPDIR/AppRun
+        chmod +x $APPDIR/AppRun
+        # desktop file
+        printf '[Desktop Entry]\nName=TTS App\nExec=tts-app\nType=Application\nIcon=tts-app\nCategories=Audio;Utility;\n' > $APPDIR/usr/share/applications/tts-app.desktop
+        # placeholder icon
+        convert -background none -size 256x256 caption:"TTS" $APPDIR/usr/share/icons/hicolor/256x256/apps/tts-app.png || true
+
+    - name: Download appimagetool
+      run: |
+        set -e
+        APPIMAGETOOL=appimagetool-x86_64.AppImage
+        if [ ! -f $APPIMAGETOOL ]; then
+          curl -L -o $APPIMAGETOOL https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage || true
+          chmod +x $APPIMAGETOOL || true
+        fi
+
+    - name: Create AppImage (if possible)
+      run: |
+        set -e
+        APPIMAGETOOL=appimagetool-x86_64.AppImage
+        if [ -x "$APPIMAGETOOL" ]; then
+          ./appimagetool-x86_64.AppImage build/appdir dist/tts-app-${VERSION}.AppImage || true
+        else
+          echo "appimagetool not available; skipping AppImage creation"
+        fi
+
+    - name: Upload artifacts to release
+      uses: actions/upload-release-asset@v1
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: dist/tts-app-${VERSION}.tar.gz
+        asset_name: tts-app-${VERSION}.tar.gz
+        asset_content_type: application/gzip
+
+    - name: Upload deb
+      uses: actions/upload-release-asset@v1
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: dist/tts-app-${VERSION}.deb
+        asset_name: tts-app-${VERSION}.deb
+        asset_content_type: application/vnd.debian.binary-package
+
+    - name: Upload AppImage (if exists)
+      if: always()
+      uses: actions/upload-release-asset@v1
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: dist/tts-app-${VERSION}.AppImage
+        asset_name: tts-app-${VERSION}.AppImage
+        asset_content_type: application/octet-stream
