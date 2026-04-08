@@ -30,6 +30,51 @@ RED    = "#dc2626"
 _play_proc   = None
 _executables = None  # 8. checado uma vez na inicialização
 
+# B2: history file for recent texts
+HISTORY_FILE = os.path.join(os.path.expanduser("~"), ".tts_app_history.txt")
+def load_history():
+    try:
+        if not os.path.exists(HISTORY_FILE):
+            return []
+        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+            lines = [l.strip() for l in f.readlines() if l.strip()]
+            # most recent last in file; return newest first, limit 50
+            return list(reversed(lines))[:50]
+    except Exception:
+        logging.exception("Failed to load history")
+        return []
+
+def save_to_history(text: str):
+    try:
+        if not text or not text.strip():
+            return
+        # append simple one-line entry
+        with open(HISTORY_FILE, "a", encoding="utf-8") as f:
+            f.write(text.strip().replace("\n", " ") + "\n")
+    except Exception:
+        logging.exception("Failed to save history")
+
+# B5: theme setting (saved to file)
+THEME_FILE = os.path.join(os.path.expanduser("~"), ".tts_app_theme")
+def current_theme():
+    try:
+        if os.path.exists(THEME_FILE):
+            with open(THEME_FILE, "r", encoding="utf-8") as f:
+                return f.read().strip() or "dark"
+    except Exception:
+        pass
+    return "dark"
+
+def toggle_theme():
+    t = current_theme()
+    new = "light" if t == "dark" else "dark"
+    try:
+        with open(THEME_FILE, "w", encoding="utf-8") as f:
+            f.write(new)
+    except Exception:
+        logging.exception("Failed to write theme file")
+    messagebox.showinfo("Tema", "Tema alterado para %s. Reinicie o app para aplicar." % new)
+
 
 def _check_deps_startup():
     global _executables
@@ -84,6 +129,9 @@ def falar(_event=None):
                 messagebox.showerror("Erro", "Falha ao gerar áudio com edge-tts"),
             ])
             return
+
+        # save to history on successful generation
+        save_to_history(texto)
 
         play_cmd = build_play_cmd(out_path)
         _play_proc = subprocess.Popen(play_cmd, stderr=subprocess.DEVNULL)
@@ -272,6 +320,15 @@ title_frame = tk.Frame(root, bg=BG, pady=12)
 title_frame.pack(fill="x")
 tk.Label(title_frame, text="🎙 Text to Speech", font=("Segoe UI", 16, "bold"), bg=BG, fg=TEXT).pack()
 tk.Label(title_frame, text="Converta texto em voz natural", font=("Segoe UI", 9), bg=BG, fg=TEXT2).pack()
+
+# History dropdown (B2)
+history_var = tk.StringVar()
+history_menu = tk.OptionMenu(title_frame, history_var, *load_history())
+history_menu.config(bg=BG, fg=TEXT, activebackground=BG2)
+history_menu.pack(side="right", padx=10)
+
+# Theme toggle (B5)
+tk.Button(title_frame, text="Tema", command=toggle_theme, bg=BG2, fg=TEXT2, relief="flat").pack(side="right", padx=6)
 
 text_frame = tk.Frame(root, bg=BG2, bd=0, highlightthickness=1, highlightbackground=ACCENT)
 text_frame.pack(padx=20, pady=(0, 4), fill="both", expand=True)
