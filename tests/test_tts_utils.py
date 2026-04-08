@@ -1,5 +1,6 @@
 import pytest
-from tts_utils import build_tts_cmd, build_play_cmd, check_executables
+from unittest.mock import patch, AsyncMock, MagicMock
+from tts_utils import build_tts_cmd, build_play_cmd, check_executables, generate_audio
 
 
 def test_build_tts_cmd_basic():
@@ -27,3 +28,33 @@ def test_build_play_cmd():
 def test_check_executables_keys():
     ex = check_executables()
     assert set(ex.keys()) == {"edge-tts", "ffplay"}
+
+
+def test_generate_audio_uses_api_with_rate():
+    mock_communicate = MagicMock()
+    mock_communicate.return_value.save = AsyncMock()
+
+    fake_edge_tts = MagicMock()
+    fake_edge_tts.Communicate = mock_communicate
+
+    with patch("tts_utils.api_available", return_value=True), \
+         patch.dict("sys.modules", {"edge_tts": fake_edge_tts}):
+        result = generate_audio("pt-BR-FranciscaNeural", 25, "Olá", "/tmp/out.mp3")
+
+    assert result == 0
+    mock_communicate.assert_called_once_with("Olá", "pt-BR-FranciscaNeural", rate="+25%")
+
+
+def test_generate_audio_api_rate_zero():
+    mock_communicate = MagicMock()
+    mock_communicate.return_value.save = AsyncMock()
+
+    fake_edge_tts = MagicMock()
+    fake_edge_tts.Communicate = mock_communicate
+
+    with patch("tts_utils.api_available", return_value=True), \
+         patch.dict("sys.modules", {"edge_tts": fake_edge_tts}):
+        result = generate_audio("pt-BR-FranciscaNeural", 0, "Olá", "/tmp/out.mp3")
+
+    assert result == 0
+    mock_communicate.assert_called_once_with("Olá", "pt-BR-FranciscaNeural", rate="+0%")

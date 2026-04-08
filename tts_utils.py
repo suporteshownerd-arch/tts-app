@@ -65,22 +65,21 @@ def check_executables() -> Dict[str, bool]:
 def generate_audio(voice: str, rate: int, text: str, output_path: str) -> int:
     """Tenta gerar áudio usando a API edge_tts quando possível.
 
-    - Se a API Python estiver disponível e rate == 0, usa edge_tts.Communicate.save.
-    - Caso contrário, cai para o comando CLI (edge-tts) com rate.
+    - Se a API Python estiver disponível, usa edge_tts.Communicate.save com rate.
+    - Caso contrário, cai para o comando CLI (edge-tts).
 
     Retorna 0 em sucesso, ou código de erro (não zero) em falha.
     """
-    # prefer API when available but only when rate==0 (safe path)
-    if api_available() and rate == 0:
+    if api_available():
         try:
             import edge_tts
+            rate_str = f"{rate:+d}%"
 
             async def _save():
-                comm = edge_tts.Communicate(text, voice)
-                # save handles file writing
+                comm = edge_tts.Communicate(text, voice, rate=rate_str)
                 await comm.save(output_path)
 
-            logger.debug("Using edge_tts API to save audio to %s", output_path)
+            logger.debug("Using edge_tts API to save audio to %s (rate=%s)", output_path, rate_str)
             asyncio.run(_save())
             return 0
         except Exception:
