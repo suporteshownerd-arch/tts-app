@@ -108,3 +108,22 @@ def play_audio(path: str) -> int:
     logger.debug("Playing audio with cmd: %s", cmd)
     proc = subprocess.run(cmd, stderr=subprocess.DEVNULL)
     return proc.returncode
+
+
+def list_voices(locale_filter: Optional[str] = None) -> list:
+    """Lista vozes disponíveis via API edge_tts.
+
+    Se locale_filter for informado (ex: 'pt-BR'), retorna apenas vozes desse locale.
+    Retorna lista de ShortNames ordenada, ou lista vazia em caso de erro.
+    """
+    try:
+        import edge_tts
+
+        voices = asyncio.run(edge_tts.list_voices())
+        names = [v["ShortName"] for v in voices]
+        if locale_filter:
+            names = [n for n in names if n.startswith(locale_filter)]
+        return sorted(names)
+    except Exception:
+        logger.exception("Failed to list voices")
+        return []

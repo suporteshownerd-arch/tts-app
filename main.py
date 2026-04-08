@@ -4,8 +4,10 @@ import subprocess
 import threading
 import shutil
 import logging
-from tts_utils import build_tts_cmd, build_play_cmd, check_executables, generate_audio, DEFAULT_TMP_FILE
+from tts_utils import build_tts_cmd, build_play_cmd, check_executables, generate_audio, DEFAULT_TMP_FILE, list_voices
 import os
+
+_play_proc = None
 
 BG = "#1e1e2e"
 BG2 = "#2a2a3e"
@@ -15,14 +17,22 @@ TEXT = "#e2e8f0"
 TEXT2 = "#94a3b8"
 GREEN = "#22c55e"
 
+def parar():
+    global _play_proc
+    if _play_proc and _play_proc.poll() is None:
+        _play_proc.terminate()
+    _play_proc = None
+    btn_falar.config(state="normal", text="▶   Falar", command=falar, bg=ACCENT)
+    status_var.set("⏹ Parado")
+
 def falar():
+    global _play_proc
     texto = text_box.get("1.0", tk.END).strip()
     voz = voz_var.get()
     velocidade = vel_var.get()
     if not texto:
         messagebox.showwarning("Aviso", "Digite algum texto primeiro!")
         return
-    # check required executables
     ex = check_executables()
     if not ex["edge-tts"]:
         messagebox.showerror("Erro", "Executável 'edge-tts' não encontrado. Instale via 'pipx install edge-tts' ou no seu PATH.")
@@ -32,10 +42,10 @@ def falar():
         return
 
     btn_falar.config(state="disabled", text="⏳  Gerando áudio...")
-    status_var.set("🔊 Falando...")
+    status_var.set("🔊 Gerando áudio...")
     def run():
+        global _play_proc
         out = None if DEFAULT_TMP_FILE is None else DEFAULT_TMP_FILE
-        # try to generate audio (prefer API when available)
         try:
             rc, out_path = generate_audio(voz, velocidade, texto, out)
         except Exception:
@@ -44,19 +54,18 @@ def falar():
             out_path = out or "/tmp/tts_saida.mp3"
 
         if rc != 0:
-            # schedule UI update on main thread
-            root.after(0, lambda: [btn_falar.config(state="normal", text="▶   Falar"), status_var.set("❌ Falha ao gerar áudio"), messagebox.showerror("Erro", "Falha ao gerar áudio com edge-tts")])
+            root.after(0, lambda: [btn_falar.config(state="normal", text="▶   Falar", command=falar, bg=ACCENT), status_var.set("❌ Falha ao gerar áudio"), messagebox.showerror("Erro", "Falha ao gerar áudio com edge-tts")])
             return
 
-        # play file (ignore stderr from ffplay - it's verbose)
         play_cmd = build_play_cmd(out_path)
-        play = subprocess.run(play_cmd, stderr=subprocess.DEVNULL)
-        # update UI on main thread
-        if play.returncode == 0:
-            root.after(0, lambda: [btn_falar.config(state="normal", text="▶   Falar"), status_var.set("✅ Pronto!")])
+        _play_proc = subprocess.Popen(play_cmd, stderr=subprocess.DEVNULL)
+        root.after(0, lambda: [btn_falar.config(state="normal", text="■  Parar", command=parar, bg="#dc2626"), status_var.set("🔊 Reproduzindo...")])
+        play_rc = _play_proc.wait()
+        _play_proc = None
+        if play_rc in (0, -15, 1):
+            root.after(0, lambda: [btn_falar.config(state="normal", text="▶   Falar", command=falar, bg=ACCENT), status_var.set("✅ Pronto!" if play_rc == 0 else "⏹ Parado")])
         else:
-            root.after(0, lambda: [btn_falar.config(state="normal", text="▶   Falar"), status_var.set("⚠️ Reprodução falhou")])
-        # cleanup temporary file if any and not user-specified
+            root.after(0, lambda: [btn_falar.config(state="normal", text="▶   Falar", command=falar, bg=ACCENT), status_var.set("⚠️ Reprodução falhou")])
         try:
             if DEFAULT_TMP_FILE is None and out_path and out_path.startswith("/tmp"):
                 os.remove(out_path)
@@ -107,6 +116,9 @@ class VozSelector(tk.Frame):
         arrow = tk.Label(self, text="▾", bg=BG2, fg=ACCENT2, font=("Segoe UI", 12), cursor="hand2")
         arrow.pack(side="right", padx=8)
         arrow.bind("<Button-1>", lambda e: self.toggle_popup())
+
+    def update_values(self, values):
+        self.values = values
 
     def toggle_popup(self):
         if self.popup and self.popup.winfo_exists():
@@ -167,7 +179,8 @@ left.pack(side="left", fill="x", expand=True, padx=(0, 10))
 tk.Label(left, text="🗣 Voz", font=("Segoe UI", 9, "bold"), bg=BG, fg=TEXT2).pack(anchor="w")
 voz_var = tk.StringVar(value="pt-BR-FranciscaNeural")
 vozes = ["pt-BR-FranciscaNeural", "pt-BR-AntonioNeural", "en-US-JennyNeural", "en-US-GuyNeural", "es-ES-ElviraNeural"]
-VozSelector(left, voz_var, vozes).pack(fill="x", pady=(4, 0))
+voz_selector = VozSelector(left, voz_var, vozes)
+voz_selector.pack(fill="x", pady=(4, 0))
 
 right = tk.Frame(ctrl_frame, bg=BG)
 right.pack(side="right")
@@ -194,5 +207,12 @@ btn_falar.pack(side="right")
 
 status_var = tk.StringVar()
 tk.Label(root, textvariable=status_var, font=("Segoe UI", 9), bg=BG, fg=GREEN).pack(pady=(0, 10))
+
+def _carregar_vozes():
+    vozes_api = list_voices()
+    if vozes_api:
+        root.after(0, lambda: voz_selector.update_values(vozes_api))
+
+threading.Thread(target=_carregar_vozes, daemon=True).start()
 
 root.mainloop()
