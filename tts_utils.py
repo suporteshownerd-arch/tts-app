@@ -9,6 +9,7 @@ import tempfile
 import time
 import os
 import json
+import wave
 
 logger = logging.getLogger(__name__)
 
@@ -222,3 +223,89 @@ def generate_audio_long(
                 os.remove(f)
             except Exception:
                 pass
+
+
+# ── Transcrição (Whisper) ─────────────────────────────────────────────────────
+
+def whisper_available() -> bool:
+    """Retorna True se openai-whisper estiver instalado."""
+    try:
+        import whisper  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def sounddevice_available() -> bool:
+    """Retorna True se sounddevice e numpy estiverem disponíveis."""
+    try:
+        import sounddevice  # noqa: F401
+        import numpy  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def transcribe_audio(path: str, model_name: str = "base", language: Optional[str] = None) -> str:
+    """Transcreve áudio para texto usando OpenAI Whisper local.
+
+    Suporta MP3, WAV, M4A, FLAC e outros formatos via ffmpeg.
+    O modelo é baixado automaticamente na primeira execução (~75 MB para 'base').
+    """
+    import whisper
+    model = whisper.load_model(model_name)
+    kwargs: dict = {}
+    if language:
+        kwargs["language"] = language
+    result = model.transcribe(path, **kwargs)
+    return result["text"].strip()
+
+
+# ── Gravação pelo microfone ───────────────────────────────────────────────────
+
+_rec_stream = None
+_rec_data: List = []
+_rec_samplerate = 16000
+
+
+def start_mic_recording(samplerate: int = 16000) -> None:
+    """Inicia gravação contínua do microfone."""
+    global _rec_stream, _rec_data, _rec_samplerate
+    import sounddevice as sd
+    import numpy as np  # noqa: F401
+    _rec_data = []
+    _rec_samplerate = samplerate
+
+    def _callback(indata, _frames, _time_info, _status):
+        _rec_data.append(indata.copy())
+
+    _rec_stream = sd.InputStream(samplerate=samplerate, channels=1, dtype="float32",
+                                  callback=_callback)
+    _rec_stream.start()
+
+
+def stop_mic_recording() -> str:
+    """Para a gravação e salva o áudio como WAV temporário. Retorna o path."""
+    global _rec_stream, _rec_data
+    import numpy as np
+
+    if _rec_stream:
+        _rec_stream.stop()
+        _rec_stream.close()
+        _rec_stream = None
+
+    if not _rec_data:
+        return ""
+
+    audio = np.concatenate(_rec_data, axis=0).flatten()
+    fd, path = tempfile.mkstemp(suffix=".wav")
+    os.close(fd)
+
+    pcm = (audio * 32767).clip(-32768, 32767).astype("int16")
+    with wave.open(path, "w") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(_rec_samplerate)
+        wf.writeframes(pcm.tobytes())
+
+    return path

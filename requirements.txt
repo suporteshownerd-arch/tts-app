@@ -3,3 +3,6 @@ pystray
 Pillow
 langdetect
 tkinterdnd2
+openai-whisper
+sounddevice
+numpy

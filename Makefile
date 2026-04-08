@@ -14,6 +14,10 @@ install: venv
 	$(VENV)/bin/python -m pip install -r requirements.txt
 	$(VENV)/bin/python -m pip install -U pytest
 
+install-mic:
+	@echo "Instalando dependência de sistema para gravação por microfone..."
+	sudo apt-get install -y libportaudio2
+
 check:
 	PYTHONPATH='.' $(PYTHON) scripts/check_deps.py
 

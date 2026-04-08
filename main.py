@@ -8,7 +8,9 @@ import os
 import shutil
 import signal
 
-from tts_utils import build_play_cmd, check_executables, generate_audio, generate_audio_long, list_voices, split_text
+from tts_utils import (build_play_cmd, check_executables, generate_audio, generate_audio_long,
+                       list_voices, split_text, transcribe_audio, whisper_available,
+                       sounddevice_available, start_mic_recording, stop_mic_recording)
 
 # ── Deps opcionais ────────────────────────────────────────────────────────────
 try:
@@ -554,6 +556,255 @@ def mostrar_fila():
                   font=("Segoe UI",10,"bold"), relief="flat", padx=20, pady=8, cursor="hand2"),
         bg="ACCENT").pack(pady=(4,12))
 
+
+def mostrar_transcricao():
+    """Janela de transcrição: arquivo de áudio ou microfone → texto."""
+    win = tk.Toplevel(root)
+    win.title("🎤 Transcrever Áudio"); win.configure(bg=T("BG"))
+    win.geometry("540x540"); win.resizable(True, True); win.transient(root)
+
+    _has_whisper = whisper_available()
+    _has_mic     = sounddevice_available()
+
+    # ── Cabeçalho ──────────────────────────────────────────────────────────────
+    reg(tk.Label(win, text="🎤 Transcrever Áudio para Texto",
+                 font=("Segoe UI",12,"bold"), bg=T("BG"), fg=T("TEXT")),
+        bg="BG", fg="TEXT").pack(padx=16, pady=(14,2), anchor="w")
+
+    if not _has_whisper:
+        reg(tk.Label(win,
+                     text="⚠️  openai-whisper não instalado.\nRode: pip install openai-whisper",
+                     font=("Segoe UI",9), bg=T("BG"), fg=T("RED"), justify="left"),
+            bg="BG", fg="RED").pack(padx=16, pady=4, anchor="w")
+
+    # ── Arquivo de áudio ───────────────────────────────────────────────────────
+    file_frame = reg(tk.Frame(win, bg=T("BG2"), highlightthickness=1,
+                              highlightbackground=T("ACCENT")),
+                     bg="BG2", highlightbackground="ACCENT")
+    file_frame.pack(fill="x", padx=16, pady=(8,4))
+
+    reg(tk.Label(file_frame, text="📁 Arquivo de áudio", font=("Segoe UI",9,"bold"),
+                 bg=T("BG2"), fg=T("TEXT2")), bg="BG2", fg="TEXT2").pack(
+        anchor="w", padx=10, pady=(8,2))
+
+    file_row = reg(tk.Frame(file_frame, bg=T("BG2")), bg="BG2")
+    file_row.pack(fill="x", padx=10, pady=(0,8))
+
+    audio_path_var = tk.StringVar()
+    path_entry = tk.Entry(file_row, textvariable=audio_path_var, bg=T("BG2"), fg=T("TEXT"),
+                          insertbackground=T("ACCENT2"), relief="flat", font=("Segoe UI",9))
+    reg(path_entry, bg="BG2", fg="TEXT", insertbackground="ACCENT2")
+    path_entry.pack(side="left", fill="x", expand=True, ipady=4)
+
+    def _escolher_arquivo():
+        p = filedialog.askopenfilename(
+            title="Escolher arquivo de áudio",
+            filetypes=[("Áudio", "*.mp3 *.wav *.m4a *.flac *.ogg *.opus"),
+                       ("Todos", "*.*")])
+        if p:
+            audio_path_var.set(p)
+
+    reg(tk.Button(file_row, text="Escolher", command=_escolher_arquivo,
+                  bg=T("ACCENT"), fg="white", font=("Segoe UI",9,"bold"),
+                  relief="flat", padx=10, pady=4, cursor="hand2"),
+        bg="ACCENT").pack(side="left", padx=(6,0))
+
+    # ── Microfone ──────────────────────────────────────────────────────────────
+    mic_frame = reg(tk.Frame(win, bg=T("BG2"), highlightthickness=1,
+                             highlightbackground=T("ACCENT")),
+                    bg="BG2", highlightbackground="ACCENT")
+    mic_frame.pack(fill="x", padx=16, pady=4)
+
+    mic_top = reg(tk.Frame(mic_frame, bg=T("BG2")), bg="BG2")
+    mic_top.pack(fill="x", padx=10, pady=(8,6))
+
+    reg(tk.Label(mic_top, text="🎙 Gravar pelo microfone", font=("Segoe UI",9,"bold"),
+                 bg=T("BG2"), fg=T("TEXT2")), bg="BG2", fg="TEXT2").pack(side="left")
+
+    if not _has_mic:
+        reg(tk.Label(mic_top, text="(sounddevice não instalado)", font=("Segoe UI",8),
+                     bg=T("BG2"), fg=T("TEXT2")), bg="BG2", fg="TEXT2").pack(side="left", padx=6)
+
+    mic_status = tk.StringVar(value="")
+    _recording = {"active": False, "tmp": ""}
+    _timer_id  = {"id": None}
+
+    rec_btn = reg(tk.Button(mic_frame, text="⏺ Iniciar gravação", bg=T("BG2"), fg=T("ACCENT2"),
+                            font=("Segoe UI",10,"bold"), relief="flat", padx=12, pady=6,
+                            cursor="hand2", state="normal" if _has_mic else "disabled"),
+                  bg="BG2", fg="ACCENT2")
+    rec_btn.pack(side="left", padx=(10,6), pady=(0,8))
+
+    rec_lbl = reg(tk.Label(mic_frame, textvariable=mic_status, font=("Segoe UI",9),
+                           bg=T("BG2"), fg=T("GREEN")), bg="BG2", fg="GREEN")
+    rec_lbl.pack(side="left", pady=(0,8))
+
+    _elapsed = {"s": 0}
+
+    def _tick():
+        _elapsed["s"] += 1
+        secs = _elapsed["s"]
+        mic_status.set(f"⏺ {secs//60:02d}:{secs%60:02d} gravando...")
+        _timer_id["id"] = win.after(1000, _tick)
+
+    def _toggle_rec():
+        if not _recording["active"]:
+            _elapsed["s"] = 0
+            start_mic_recording()
+            _recording["active"] = True
+            rec_btn.config(text="⏹ Parar gravação", fg="white",
+                           bg=T("RED") if _has_mic else T("BG2"))
+            reg(rec_btn, bg="RED")
+            mic_status.set("⏺ 00:00 gravando...")
+            _tick()
+        else:
+            if _timer_id["id"]:
+                win.after_cancel(_timer_id["id"]); _timer_id["id"] = None
+            tmp = stop_mic_recording()
+            _recording["active"] = False
+            _recording["tmp"] = tmp
+            rec_btn.config(text="⏺ Iniciar gravação", fg=T("ACCENT2"), bg=T("BG2"))
+            reg(rec_btn, bg="BG2", fg="ACCENT2")
+            if tmp:
+                audio_path_var.set(tmp)
+                mic_status.set("✅ Gravação salva — clique em Transcrever")
+            else:
+                mic_status.set("⚠️ Nenhum áudio captado")
+
+    rec_btn.config(command=_toggle_rec)
+
+    # ── Opções: modelo e idioma ────────────────────────────────────────────────
+    opts = reg(tk.Frame(win, bg=T("BG")), bg="BG")
+    opts.pack(fill="x", padx=16, pady=(6,2))
+
+    reg(tk.Label(opts, text="Modelo Whisper:", font=("Segoe UI",9), bg=T("BG"), fg=T("TEXT2")),
+        bg="BG", fg="TEXT2").pack(side="left")
+    model_var = tk.StringVar(value="base")
+    for m in ["tiny", "base", "small", "medium"]:
+        tk.Radiobutton(opts, text=m, variable=model_var, value=m,
+                       bg=T("BG"), fg=T("TEXT"), selectcolor=T("BG2"),
+                       activebackground=T("BG"), font=("Segoe UI",9),
+                       cursor="hand2").pack(side="left", padx=4)
+
+    reg(tk.Label(opts, text="  Idioma:", font=("Segoe UI",9), bg=T("BG"), fg=T("TEXT2")),
+        bg="BG", fg="TEXT2").pack(side="left", padx=(8,0))
+    lang_var = tk.StringVar(value="")
+    lang_opts = [("Auto", ""), ("PT", "pt"), ("EN", "en"), ("ES", "es"),
+                 ("FR", "fr"), ("DE", "de"), ("JA", "ja"), ("ZH", "zh")]
+    for lbl, val in lang_opts:
+        tk.Radiobutton(opts, text=lbl, variable=lang_var, value=val,
+                       bg=T("BG"), fg=T("TEXT"), selectcolor=T("BG2"),
+                       activebackground=T("BG"), font=("Segoe UI",9),
+                       cursor="hand2").pack(side="left", padx=2)
+
+    hint = ("tiny ≈ 75 MB · base ≈ 140 MB · small ≈ 460 MB  "
+            "(download automático na 1ª execução)")
+    reg(tk.Label(win, text=hint, font=("Segoe UI",8), bg=T("BG"), fg=T("TEXT2")),
+        bg="BG", fg="TEXT2").pack(padx=16, anchor="w")
+
+    # ── Botão transcrever ──────────────────────────────────────────────────────
+    trans_status = tk.StringVar(value="")
+    reg(tk.Label(win, textvariable=trans_status, font=("Segoe UI",9),
+                 bg=T("BG"), fg=T("GREEN")), bg="BG", fg="GREEN").pack(padx=16, anchor="w")
+
+    trans_pb = ttk.Progressbar(win, mode="indeterminate",
+                                style="TTS.Horizontal.TProgressbar")
+
+    def _transcrever():
+        path = audio_path_var.get().strip()
+        if not path:
+            messagebox.showwarning("Aviso", "Selecione um arquivo ou grave pelo microfone.",
+                                   parent=win); return
+        if not os.path.exists(path):
+            messagebox.showerror("Erro", f"Arquivo não encontrado:\n{path}", parent=win); return
+        if not _has_whisper:
+            messagebox.showerror("Erro",
+                                 "openai-whisper não está instalado.\n"
+                                 "Rode: pip install openai-whisper", parent=win); return
+
+        btn_trans.config(state="disabled")
+        trans_status.set("⏳ Transcrevendo... (pode levar alguns segundos)")
+        trans_pb.pack(fill="x", padx=16, pady=(0,4))
+        trans_pb.start(10)
+
+        def run():
+            try:
+                lang = lang_var.get() or None
+                text = transcribe_audio(path, model_name=model_var.get(), language=lang)
+                root.after(0, lambda: _mostrar_resultado(text))
+            except Exception as exc:
+                root.after(0, lambda: [
+                    trans_pb.stop(), trans_pb.pack_forget(),
+                    btn_trans.config(state="normal"),
+                    trans_status.set(f"❌ Erro: {exc}"),
+                    messagebox.showerror("Erro na transcrição", str(exc), parent=win)])
+
+        threading.Thread(target=run, daemon=True).start()
+
+    btn_trans = reg(tk.Button(win, text="🔍 Transcrever", command=_transcrever,
+                              bg=T("ACCENT"), fg="white", font=("Segoe UI",11,"bold"),
+                              relief="flat", padx=22, pady=8, cursor="hand2",
+                              state="normal" if _has_whisper else "disabled"),
+                   bg="ACCENT")
+    btn_trans.pack(pady=(4,2))
+
+    # ── Resultado ──────────────────────────────────────────────────────────────
+    reg(tk.Label(win, text="Resultado:", font=("Segoe UI",9,"bold"),
+                 bg=T("BG"), fg=T("TEXT2")), bg="BG", fg="TEXT2").pack(
+        padx=16, pady=(6,0), anchor="w")
+
+    res_frame = reg(tk.Frame(win, bg=T("BG2"), highlightthickness=1,
+                             highlightbackground=T("ACCENT")),
+                    bg="BG2", highlightbackground="ACCENT")
+    res_frame.pack(fill="both", expand=True, padx=16, pady=(2,4))
+
+    res_box = tk.Text(res_frame, height=6, font=("Segoe UI",10), bg=T("BG2"), fg=T("TEXT"),
+                      insertbackground=T("ACCENT2"), relief="flat", bd=0, padx=10, pady=8,
+                      wrap="word", selectbackground=T("ACCENT"))
+    reg(res_box, bg="BG2", fg="TEXT", insertbackground="ACCENT2", selectbackground="ACCENT")
+    res_sb = tk.Scrollbar(res_frame, command=res_box.yview)
+    res_box.config(yscrollcommand=res_sb.set)
+    res_sb.pack(side="right", fill="y")
+    res_box.pack(fill="both", expand=True)
+
+    def _mostrar_resultado(text: str):
+        trans_pb.stop(); trans_pb.pack_forget()
+        btn_trans.config(state="normal")
+        trans_status.set(f"✅ {len(text)} chars · {len(text.split())} palavras")
+        res_box.delete("1.0", tk.END)
+        res_box.insert("1.0", text)
+        _notify("TTS App", "Transcrição concluída.")
+
+    # ── Ações do resultado ─────────────────────────────────────────────────────
+    act_frame = reg(tk.Frame(win, bg=T("BG")), bg="BG")
+    act_frame.pack(fill="x", padx=16, pady=(0,12))
+
+    def _copiar():
+        txt = res_box.get("1.0", tk.END).strip()
+        if txt:
+            root.clipboard_clear(); root.clipboard_append(txt)
+            trans_status.set("📋 Copiado!")
+
+    def _usar_no_tts():
+        txt = res_box.get("1.0", tk.END).strip()
+        if txt:
+            text_box.delete("1.0", tk.END); text_box.insert("1.0", txt)
+            _atualizar_contador()
+            win.destroy()
+
+    for lbl, cmd in [("📋 Copiar", _copiar), ("✏ Usar no TTS", _usar_no_tts)]:
+        reg(tk.Button(act_frame, text=lbl, command=cmd, bg=T("BG2"), fg=T("TEXT2"),
+                      font=("Segoe UI",10,"bold"), relief="flat", padx=14, pady=6,
+                      cursor="hand2"), bg="BG2", fg="TEXT2").pack(side="left", padx=(0,8))
+
+    reg(tk.Button(act_frame, text="❌ Fechar", command=win.destroy,
+                  bg=T("BG2"), fg=T("TEXT2"), font=("Segoe UI",10),
+                  relief="flat", padx=14, pady=6, cursor="hand2"),
+        bg="BG2", fg="TEXT2").pack(side="right")
+
+    win.bind("<Escape>", lambda e: win.destroy())
+
+
 def _atualizar_contador(_event=None):
     texto = text_box.get("1.0", tk.END).strip()
     n = len(texto)
@@ -833,7 +1084,8 @@ reg(tk.Label(th, text="Texto", font=("Segoe UI",9,"bold"), bg=T("BG2"), fg=T("TE
     bg="BG2", fg="TEXT2").pack(side="left")
 
 for icon, cmd in [("📋", colar_clipboard), ("📂", abrir_txt), ("🕘", mostrar_historico),
-                   ("📤", mostrar_fila), ("A-", lambda: _ajustar_fonte(-1)), ("A+", lambda: _ajustar_fonte(+1))]:
+                   ("📤", mostrar_fila), ("🎤", mostrar_transcricao),
+                   ("A-", lambda: _ajustar_fonte(-1)), ("A+", lambda: _ajustar_fonte(+1))]:
     reg(tk.Button(th, text=icon, command=cmd, bg=T("BG2"), fg=T("TEXT2"),
                   font=("Segoe UI", 9 if len(icon)==1 else 8), relief="flat", cursor="hand2",
                   padx=5, activebackground=T("BG2"), activeforeground=T("ACCENT2")),
