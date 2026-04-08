@@ -8,12 +8,48 @@ import logging
 import tempfile
 import time
 import os
+import json
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_TMP_FILE: Optional[str] = None
 
 _RETRY_DELAYS = [1, 3, 7]  # segundos entre tentativas para erro 529
+
+# ── Cache de vozes ────────────────────────────────────────────────────────────
+_CONFIG_DIR = os.path.expanduser("~/.config/tts-app")
+_VOICES_CACHE_FILE = os.path.join(_CONFIG_DIR, "voices_cache.json")
+_VOICES_CACHE_TTL = 86400  # 24h em segundos
+
+
+def load_voices_cache(locale_filter: Optional[str] = None) -> Optional[List[str]]:
+    """Carrega lista de vozes do cache local se válido (TTL 24h).
+
+    Retorna lista de vozes ou None se cache inválido/inexistente.
+    """
+    try:
+        with open(_VOICES_CACHE_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        saved_at = data.get("saved_at", 0)
+        if time.time() - saved_at > _VOICES_CACHE_TTL:
+            return None
+        voices = data.get("voices", [])
+        if locale_filter:
+            voices = [v for v in voices if v.startswith(locale_filter)]
+        return voices
+    except Exception:
+        return None
+
+
+def save_voices_cache(voices: List[str]) -> None:
+    """Salva lista de vozes no cache local com timestamp."""
+    try:
+        os.makedirs(_CONFIG_DIR, exist_ok=True)
+        data = {"saved_at": time.time(), "voices": voices}
+        with open(_VOICES_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+    except Exception:
+        logger.warning("Failed to save voices cache")
 
 
 def api_available() -> bool:
@@ -89,13 +125,20 @@ def play_audio(path: str, volume: int = 100) -> int:
 
 
 def list_voices(locale_filter: Optional[str] = None) -> list:
+    # Tentar cache primeiro
+    cached = load_voices_cache(locale_filter)
+    if cached is not None:
+        logger.debug("Voices loaded from cache (%d voices)", len(cached))
+        return cached
+
     try:
         import edge_tts
         voices = asyncio.run(edge_tts.list_voices())
-        names = [v["ShortName"] for v in voices]
+        names = sorted([v["ShortName"] for v in voices])
+        save_voices_cache(names)  # salva lista completa no cache
         if locale_filter:
             names = [n for n in names if n.startswith(locale_filter)]
-        return sorted(names)
+        return names
     except Exception:
         logger.exception("Failed to list voices")
         return []

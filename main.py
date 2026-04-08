@@ -6,6 +6,7 @@ import logging
 import json
 import os
 import shutil
+import signal
 
 from tts_utils import build_play_cmd, check_executables, generate_audio, generate_audio_long, list_voices, split_text
 
@@ -23,6 +24,12 @@ try:
 except ImportError:
     _LANG_OK = False
 
+try:
+    import tkinterdnd2 as _dnd
+    _DND_OK = True
+except ImportError:
+    _DND_OK = False
+
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.WARNING,
@@ -34,11 +41,61 @@ logging.basicConfig(
 )
 
 # ── Configuração ──────────────────────────────────────────────────────────────
-CONFIG_DIR   = os.path.expanduser("~/.config/tts-app")
-PREFS_FILE   = os.path.join(CONFIG_DIR, "prefs.json")
-HISTORY_FILE = os.path.join(CONFIG_DIR, "history.json")
-MAX_HISTORY  = 20
+CONFIG_DIR      = os.path.expanduser("~/.config/tts-app")
+PREFS_FILE      = os.path.join(CONFIG_DIR, "prefs.json")
+HISTORY_FILE    = os.path.join(CONFIG_DIR, "history.json")
+LAST_AUDIO_FILE = os.path.join(CONFIG_DIR, "last_audio.mp3")
+MAX_HISTORY     = 20
 LONG_TEXT_THRESHOLD = 4500
+
+# ── i18n ──────────────────────────────────────────────────────────────────────
+_STRINGS = {
+    "pt-BR": {
+        "speak":   "▶   Falar",
+        "stop":    "■  Parar",
+        "save":    "💾 Salvar MP3",
+        "clear":   "🗑 Limpar",
+        "pause":   "⏸ Pausar",
+        "resume":  "▶ Retomar",
+        "repeat":  "🔁",
+        "loading": "⏳  Gerando áudio...",
+        "playing": "🔊 Reproduzindo...",
+        "ready":   "✅ Pronto!",
+        "stopped": "⏹ Parado",
+        "saving":  "💾 Gerando áudio...",
+        "chars":   "caracteres",
+        "chars_long": " ⚠️ texto longo",
+        "title_sub": "Converta texto em voz natural",
+        "voice_lbl": "🗣 Voz",
+        "speed_lbl": "⚡ Velocidade",
+        "vol_lbl":   "🔊 Volume",
+    },
+    "en-US": {
+        "speak":   "▶   Speak",
+        "stop":    "■  Stop",
+        "save":    "💾 Save MP3",
+        "clear":   "🗑 Clear",
+        "pause":   "⏸ Pause",
+        "resume":  "▶ Resume",
+        "repeat":  "🔁",
+        "loading": "⏳  Generating audio...",
+        "playing": "🔊 Playing...",
+        "ready":   "✅ Done!",
+        "stopped": "⏹ Stopped",
+        "saving":  "💾 Generating audio...",
+        "chars":   "characters",
+        "chars_long": " ⚠️ long text",
+        "title_sub": "Convert text to natural speech",
+        "voice_lbl": "🗣 Voice",
+        "speed_lbl": "⚡ Speed",
+        "vol_lbl":   "🔊 Volume",
+    },
+}
+
+
+def _s(key: str) -> str:
+    """Retorna string traduzida para o idioma atual."""
+    return _STRINGS.get(_ui_lang, _STRINGS["pt-BR"]).get(key, key)
 
 def _load_json(path, default):
     try:
@@ -71,6 +128,7 @@ THEMES = {
 _prefs      = load_prefs()
 _theme_name = _prefs.get("theme", "dark")
 _font_size  = _prefs.get("font_size", 11)
+_ui_lang    = _prefs.get("ui_lang", "pt-BR")
 _themed     = []
 
 def T(key):  return THEMES[_theme_name][key]
@@ -88,10 +146,27 @@ def toggle_theme():
     apply_theme(); save_prefs(theme=_theme_name)
     btn_theme.config(text="☀️" if _theme_name == "dark" else "🌙")
 
+def toggle_lang():
+    global _ui_lang
+    _ui_lang = "en-US" if _ui_lang == "pt-BR" else "pt-BR"
+    save_prefs(ui_lang=_ui_lang)
+    _apply_i18n()
+
+def _apply_i18n():
+    """Atualiza labels e botões para o idioma atual."""
+    try:
+        btn_falar.config(text=_s("speak"))
+        btn_lang.config(text="🇧🇷" if _ui_lang == "pt-BR" else "🇺🇸")
+        char_var.set(f"0 {_s('chars')}")
+        _atualizar_contador()
+    except Exception:
+        pass
+
 # ── Estado ────────────────────────────────────────────────────────────────────
-_play_proc   = None
-_executables = None
-_tray_icon   = None
+_play_proc    = None
+_play_paused  = False
+_executables  = None
+_tray_icon    = None
 _voices_loaded = False
 
 def _check_deps_startup():
@@ -185,17 +260,42 @@ def _start_tray():
     _tray_icon = pystray.Icon("tts-app", _build_tray_image(), "TTS App", menu)
     threading.Thread(target=_tray_icon.run, daemon=True).start()
 
-def _on_minimize(e):
+def _on_minimize(_e):
     if root.state() == "iconic" and _TRAY_OK and _tray_icon:
         root.after(100, root.withdraw)
 
 # ── Ações ─────────────────────────────────────────────────────────────────────
 def parar():
-    global _play_proc
-    if _play_proc and _play_proc.poll() is None: _play_proc.terminate()
+    global _play_proc, _play_paused
+    if _play_proc and _play_proc.poll() is None:
+        if _play_paused:
+            try: os.kill(_play_proc.pid, signal.SIGCONT)
+            except Exception: pass
+            _play_paused = False
+        _play_proc.terminate()
     _play_proc = None
-    btn_falar.config(state="normal", text="▶   Falar", command=falar, bg=T("ACCENT"))
-    status_var.set("⏹ Parado")
+    _play_paused = False
+    btn_falar.config(state="normal", text=_s("speak"), command=falar, bg=T("ACCENT"))
+    try: btn_pause.pack_forget()
+    except Exception: pass
+    status_var.set(_s("stopped"))
+
+def pausar_retomar():
+    global _play_paused
+    if not _play_proc or _play_proc.poll() is not None:
+        return
+    if _play_paused:
+        try: os.kill(_play_proc.pid, signal.SIGCONT)
+        except Exception: pass
+        _play_paused = False
+        btn_pause.config(text=_s("pause"))
+        status_var.set(_s("playing"))
+    else:
+        try: os.kill(_play_proc.pid, signal.SIGSTOP)
+        except Exception: pass
+        _play_paused = True
+        btn_pause.config(text=_s("resume"))
+        status_var.set("⏸ Pausado")
 
 def _pb_show(): pb.pack(fill="x", padx=20, pady=(0,4), before=text_frame); pb.start(10)
 def _pb_hide(): pb.stop(); pb.pack_forget()
@@ -215,12 +315,12 @@ def falar(_event=None):
             f"O texto tem {len(texto)} caracteres e será dividido em {len(chunks)} partes.\nContinuar?"):
             return
 
-    btn_falar.config(state="disabled", text="⏳  Gerando áudio...")
-    status_var.set("🔊 Gerando áudio...")
+    btn_falar.config(state="disabled", text=_s("loading"))
+    status_var.set("🔊 " + (_s("loading").replace("⏳  ", "")))
     root.after(0, _pb_show)
 
     def run():
-        global _play_proc
+        global _play_proc, _play_paused
         try:
             fn = generate_audio_long if len(chunks) > 1 else generate_audio
             rc, out_path = fn(voz, vel, texto, None)
@@ -229,19 +329,31 @@ def falar(_event=None):
 
         if rc != 0:
             root.after(0, lambda: [_pb_hide(),
-                btn_falar.config(state="normal", text="▶   Falar", command=falar, bg=T("ACCENT")),
+                btn_falar.config(state="normal", text=_s("speak"), command=falar, bg=T("ACCENT")),
                 status_var.set("❌ Falha ao gerar áudio"),
                 messagebox.showerror("Erro", "Falha ao gerar áudio.\n529 = serviço sobrecarregado, tente novamente.")]); return
 
+        # Salvar cópia como last_audio.mp3
+        try:
+            os.makedirs(CONFIG_DIR, exist_ok=True)
+            shutil.copy2(out_path, LAST_AUDIO_FILE)
+            root.after(0, lambda: btn_repeat.config(state="normal"))
+        except Exception:
+            pass
+
         add_to_history(texto)
+        _play_paused = False
         _play_proc = subprocess.Popen(build_play_cmd(out_path, volume=vol), stderr=subprocess.DEVNULL)
         root.after(0, lambda: [_pb_hide(),
-            btn_falar.config(state="normal", text="■  Parar", command=parar, bg=T("RED")),
-            status_var.set("🔊 Reproduzindo...")])
-        play_rc = _play_proc.wait(); _play_proc = None
+            btn_falar.config(state="normal", text=_s("stop"), command=parar, bg=T("RED")),
+            btn_pause.pack(side="right", padx=(0, 6)),
+            btn_pause.config(text=_s("pause")),
+            status_var.set(_s("playing"))])
+        play_rc = _play_proc.wait(); _play_proc = None; _play_paused = False
         root.after(0, lambda: [
-            btn_falar.config(state="normal", text="▶   Falar", command=falar, bg=T("ACCENT")),
-            status_var.set("✅ Pronto!" if play_rc == 0 else "⏹ Parado")])
+            btn_falar.config(state="normal", text=_s("speak"), command=falar, bg=T("ACCENT")),
+            btn_pause.pack_forget(),
+            status_var.set(_s("ready") if play_rc == 0 else _s("stopped"))])
         if play_rc == 0:
             _notify("TTS App", "Reprodução concluída.")
         try:
@@ -249,6 +361,31 @@ def falar(_event=None):
         except Exception: pass
 
     threading.Thread(target=run, daemon=True).start()
+
+def repetir():
+    """Reproduz o último áudio gerado."""
+    global _play_proc, _play_paused
+    if not os.path.exists(LAST_AUDIO_FILE):
+        return
+    if not _deps_ok(need_ffplay=True):
+        return
+    vol = vol_var.get()
+    _play_paused = False
+    _play_proc = subprocess.Popen(build_play_cmd(LAST_AUDIO_FILE, volume=vol), stderr=subprocess.DEVNULL)
+    btn_falar.config(state="normal", text=_s("stop"), command=parar, bg=T("RED"))
+    btn_pause.pack(side="right", padx=(0, 6))
+    btn_pause.config(text=_s("pause"))
+    status_var.set(_s("playing"))
+
+    def _wait():
+        global _play_proc, _play_paused
+        play_rc = _play_proc.wait(); _play_proc = None; _play_paused = False
+        root.after(0, lambda: [
+            btn_falar.config(state="normal", text=_s("speak"), command=falar, bg=T("ACCENT")),
+            btn_pause.pack_forget(),
+            status_var.set(_s("ready") if play_rc == 0 else _s("stopped"))])
+
+    threading.Thread(target=_wait, daemon=True).start()
 
 def salvar(_event=None):
     texto = text_box.get("1.0", tk.END).strip()
@@ -259,7 +396,7 @@ def salvar(_event=None):
     if not path: return
     if not _deps_ok(need_ffplay=False): return
     voz, vel = voz_var.get(), vel_var.get()
-    status_var.set("💾 Gerando áudio..."); root.after(0, _pb_show)
+    status_var.set(_s("saving")); root.after(0, _pb_show)
 
     def run():
         try:
@@ -282,7 +419,8 @@ def salvar(_event=None):
 
 def limpar():
     if text_box.get("1.0", tk.END).strip() and not messagebox.askyesno("Limpar","Deseja apagar o texto?"): return
-    text_box.delete("1.0", tk.END); status_var.set(""); char_var.set("0 caracteres")
+    n_str = f"0 {_s('chars')}"
+    text_box.delete("1.0", tk.END); status_var.set(""); char_var.set(n_str)
 
 def abrir_txt(_event=None):
     path = filedialog.askopenfilename(filetypes=[("Texto","*.txt"),("Todos","*.*")])
@@ -376,7 +514,7 @@ def mostrar_fila():
 def _atualizar_contador(_event=None):
     texto = text_box.get("1.0", tk.END).strip()
     n = len(texto)
-    char_var.set(f"{n} caracteres" + (" ⚠️ texto longo" if n > LONG_TEXT_THRESHOLD else ""))
+    char_var.set(f"{n} {_s('chars')}" + (_s("chars_long") if n > LONG_TEXT_THRESHOLD else ""))
 
 def _ajustar_fonte(delta):
     global _font_size
@@ -488,10 +626,21 @@ class VozSelector(tk.Frame):
         fe.focus_set()
 
 # ── Janela ────────────────────────────────────────────────────────────────────
-root = tk.Tk()
+if _DND_OK:
+    root = _dnd.TkinterDnD.Tk()
+else:
+    root = tk.Tk()
 root.title("Text to Speech"); root.geometry("560x640")
 root.minsize(480, 520); root.resizable(True, True)
 reg(root, bg="BG")
+
+# HiDPI scaling: detectar DPI e aplicar escala
+try:
+    _dpi = root.winfo_fpixels("1i")
+    if _dpi > 96:
+        root.tk.call("tk", "scaling", _dpi / 72.0)
+except Exception:
+    pass
 
 reg(tk.Frame(root, bg=T("ACCENT"), height=4), bg="ACCENT").pack(fill="x")
 title_frame = reg(tk.Frame(root, bg=T("BG"), pady=10), bg="BG"); title_frame.pack(fill="x")
@@ -503,6 +652,12 @@ btn_theme = reg(tk.Button(title_row, text="☀️" if _theme_name=="dark" else "
                            relief="flat", cursor="hand2", activebackground=T("BG"), activeforeground=T("ACCENT2")),
                 bg="BG", activebackground="BG", fg="TEXT2", activeforeground="ACCENT2")
 btn_theme.pack(side="left")
+btn_lang = reg(tk.Button(title_row, text="🇧🇷" if _ui_lang == "pt-BR" else "🇺🇸",
+                          command=toggle_lang, bg=T("BG"), fg=T("TEXT2"),
+                          font=("Segoe UI",11), relief="flat", cursor="hand2",
+                          activebackground=T("BG"), activeforeground=T("ACCENT2")),
+               bg="BG", activebackground="BG", fg="TEXT2", activeforeground="ACCENT2")
+btn_lang.pack(side="left", padx=(4,0))
 reg(tk.Label(title_frame, text="Converta texto em voz natural", font=("Segoe UI",9), bg=T("BG"), fg=T("TEXT2")),
     bg="BG", fg="TEXT2").pack()
 
@@ -531,6 +686,23 @@ text_box = tk.Text(text_frame, height=8, font=("Segoe UI",_font_size), bg=T("BG2
 reg(text_box, bg="BG2", fg="TEXT", insertbackground="ACCENT2", selectbackground="ACCENT")
 text_box.pack(fill="both", expand=True, padx=2, pady=(2,0))
 text_box.bind("<KeyRelease>", lambda e: [_atualizar_contador(e), _detect_and_suggest(e)])
+
+# Drag & drop de arquivos .txt (requer tkinterdnd2)
+if _DND_OK:
+    def _on_drop(event):
+        path = event.data.strip().strip("{}")
+        if path.lower().endswith(".txt"):
+            try:
+                with open(path, encoding="utf-8") as f:
+                    content = f.read()
+                text_box.delete("1.0", tk.END)
+                text_box.insert("1.0", content)
+                _atualizar_contador()
+                status_var.set(f"📂 {os.path.basename(path)}")
+            except Exception as exc:
+                messagebox.showerror("Erro", f"Não foi possível abrir o arquivo:\n{exc}")
+    text_box.drop_target_register("DND_Files")
+    text_box.dnd_bind("<<Drop>>", _on_drop)
 
 char_var = tk.StringVar(value="0 caracteres")
 reg(tk.Label(text_frame, textvariable=char_var, font=("Segoe UI",8), bg=T("BG2"), fg=T("TEXT2"), anchor="e"),
@@ -580,6 +752,20 @@ reg(tk.Button(btn_frame, text="💾 Salvar MP3", command=salvar, bg=T("BG2"), fg
 btn_falar = reg(tk.Button(btn_frame, text="▶   Falar", command=falar, bg=T("ACCENT"), fg="white",
                             font=("Segoe UI",11,"bold"), relief="flat", padx=25, pady=8, cursor="hand2"), bg="ACCENT")
 btn_falar.pack(side="right")
+
+btn_pause = reg(tk.Button(btn_frame, text=_s("pause"), command=pausar_retomar,
+                           bg=T("BG2"), fg=T("TEXT2"), font=("Segoe UI",10,"bold"),
+                           relief="flat", padx=15, pady=8, cursor="hand2"),
+                bg="BG2", fg="TEXT2")
+# btn_pause is shown/hidden dynamically during playback
+
+_has_last = os.path.exists(LAST_AUDIO_FILE)
+btn_repeat = reg(tk.Button(btn_frame, text="🔁", command=repetir,
+                            bg=T("BG2"), fg=T("TEXT2"), font=("Segoe UI",10),
+                            relief="flat", padx=10, pady=8, cursor="hand2",
+                            state="normal" if _has_last else "disabled"),
+                 bg="BG2", fg="TEXT2")
+btn_repeat.pack(side="right", padx=(0,6))
 
 status_var = tk.StringVar()
 reg(tk.Label(root, textvariable=status_var, font=("Segoe UI",9), bg=T("BG"), fg=T("GREEN")),

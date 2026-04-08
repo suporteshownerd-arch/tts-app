@@ -2,3 +2,4 @@ edge-tts
 pystray
 Pillow
 langdetect
+tkinterdnd2
