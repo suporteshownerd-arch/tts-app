@@ -48,9 +48,9 @@ def build_tts_cmd(voice: str, rate: int, text: str, output_path: str) -> List[st
     ]
 
 
-def build_play_cmd(path: str) -> List[str]:
+def build_play_cmd(path: str, volume: int = 100) -> List[str]:
     """Retorna comando para reproduzir arquivo com ffplay."""
-    return ["ffplay", "-nodisp", "-autoexit", path]
+    return ["ffplay", "-nodisp", "-autoexit", "-volume", str(volume), path]
 
 
 def check_executables() -> Dict[str, bool]:
