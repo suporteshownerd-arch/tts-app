@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, feature/pr-ready ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
+
+    - name: Install system dependencies
+      run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+    - name: Install Python deps and run tests
+      run: |
+        make install
+        export PATH="${GITHUB_WORKSPACE}/.venv/bin:$PATH"
+        PYTHONPATH='.' .venv/bin/pytest -q
