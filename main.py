@@ -306,7 +306,15 @@ class VozSelector(tk.Frame):
             self.popup.geometry(f"{w}x{min(len(filtered)*32+100,320)}+{x}+{y}")
         filter_var.trace_add("write", lambda *_: render(filter_var.get()))
         render()
-        self.popup.bind("<FocusOut>", lambda e: self.popup.destroy() if self.popup and self.popup.winfo_exists() else None)
+        def _maybe_close():
+            if not (self.popup and self.popup.winfo_exists()):
+                return
+            focused = str(self.popup.focus_get() or "")
+            if not focused.startswith(str(self.popup)):
+                self.popup.destroy()
+                self.popup = None
+
+        self.popup.bind("<FocusOut>", lambda e: self.popup.after(100, _maybe_close))
         fe.focus_set()
 
 # ── Janela ────────────────────────────────────────────────────────────────────
