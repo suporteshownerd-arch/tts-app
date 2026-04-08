@@ -2,13 +2,13 @@
 
 ## Visão Geral
 
- Aplicativo desktop para Linux que converte texto em fala (Text-to-Speech) usando a engine Microsoft Edge TTS. Interface gráfica simples e moderna; não requer conta ou API key, porém requer conexão com a internet para acessar o serviço online.
+Aplicativo desktop para Linux que converte texto em fala (Text-to-Speech) usando a engine Microsoft Edge TTS. Interface gráfica moderna com suporte a múltiplos idiomas, tema claro/escuro, histórico, fila de exportação em lote e tray icon. Não requer conta ou API key, porém requer conexão com a internet para acessar o serviço online.
 
 ---
 
 ## Problema
 
-Usuários Linux que precisam ouvir textos (acessibilidade, revisão de conteúdo, estudo) não têm uma ferramenta TTS desktop simples, com vozes de qualidade e controle de velocidade, que funcione offline via CLI ou com GUI intuitiva.
+Usuários Linux que precisam ouvir textos (acessibilidade, revisão de conteúdo, estudo) não têm uma ferramenta TTS desktop simples, com vozes de qualidade e controle de velocidade, que funcione com GUI intuitiva e integre bem ao ambiente de trabalho.
 
 ---
 
@@ -17,46 +17,65 @@ Usuários Linux que precisam ouvir textos (acessibilidade, revisão de conteúdo
 - Converter texto em fala com vozes neurais de alta qualidade
 - Permitir salvar o áudio gerado como arquivo MP3
 - Funcionar inteiramente no Linux sem dependência de conta ou serviço pago
-- Ser fácil de instalar e rodar
+- Ser fácil de instalar e integrar ao sistema (launcher GNOME, tray, notificações)
 
 ---
 
 ## Usuários-Alvo
 
-| Perfil                         | Necessidade                             |
-| ------------------------------ | --------------------------------------- |
-| Usuário com deficiência visual | Ouvir textos sem configuração complexa  |
-| Estudante / leitor             | Ouvir conteúdo enquanto faz outra coisa |
-| Criador de conteúdo            | Gerar áudio narrado rapidamente         |
-| Desenvolvedor                  | Integrar TTS em scripts via `tts_utils` |
+| Perfil                         | Necessidade                                       |
+| ------------------------------ | ------------------------------------------------- |
+| Usuário com deficiência visual | Ouvir textos sem configuração complexa            |
+| Estudante / leitor             | Ouvir conteúdo enquanto faz outra coisa           |
+| Criador de conteúdo            | Gerar áudio narrado rapidamente, exportar em lote |
+| Desenvolvedor                  | Integrar TTS em scripts via `tts_utils`           |
 
 ---
 
 ## Funcionalidades
 
-### Existentes (v1.0)
+### Implementadas (v1.x)
 
-| #   | Funcionalidade           | Descrição                                                      |
-| --- | ------------------------ | -------------------------------------------------------------- |
-| F1  | Entrada de texto         | Área de texto multilinha para colar ou digitar conteúdo        |
-| F2  | Seleção de voz           | Dropdown com 5 vozes neurais (pt-BR, en-US, es-ES)             |
-| F3  | Controle de velocidade   | Slider de -50% a +50%                                          |
-| F4  | Reprodução direta        | Botão "Falar" gera e reproduz o áudio imediatamente            |
-| F5  | Salvar MP3               | Exporta o áudio gerado para arquivo `.mp3`                     |
-| F6  | Limpar texto             | Limpa a área de entrada                                        |
-| F7  | Feedback de status       | Indicador visual do estado atual (gerando, reproduzindo, erro) |
-| F8  | Checagem de dependências | Verifica `edge-tts` e `ffplay` antes de executar               |
+| #   | Funcionalidade            | Descrição                                                                             |
+| --- | ------------------------- | ------------------------------------------------------------------------------------- |
+| F1  | Entrada de texto          | Área multilinha com undo/redo (Ctrl+Z/Y), contador de caracteres                      |
+| F2  | Seleção de voz            | Dropdown com vozes neurais carregadas dinamicamente via API                           |
+| F3  | Controle de velocidade    | Slider de -50% a +50%                                                                 |
+| F4  | Controle de volume        | Slider de 0% a 100%                                                                   |
+| F5  | Reprodução direta         | Botão "Falar" gera e reproduz; vira "■ Parar" durante reprodução                      |
+| F6  | Salvar MP3                | Exporta o áudio para arquivo `.mp3`                                                   |
+| F7  | Limpar texto              | Com confirmação quando há conteúdo                                                    |
+| F8  | Checagem de dependências  | Verifica `edge-tts` e `ffplay` uma vez na inicialização                               |
+| F9  | Abrir arquivo .txt        | Botão 📂 e atalho `Ctrl+O`                                                            |
+| F10 | Colar clipboard           | Botão 📋 para colar diretamente                                                       |
+| F11 | Histórico de textos       | Últimos 20 textos salvos em `~/.config/tts-app/history.json`                          |
+| F12 | Fila de exportação        | Botão 📤 para exportar múltiplos textos em lote                                       |
+| F13 | Tema claro/escuro         | Toggle ☀️/🌙 com preferência persistente                                              |
+| F14 | Tamanho de fonte          | Botões A- / A+ no textarea                                                            |
+| F15 | Filtro de vozes           | Campo de busca + abas de idioma (ALL PT EN ES FR DE JA ZH)                            |
+| F16 | Vozes recentes            | Últimas 3 vozes usadas fixadas no topo do dropdown                                    |
+| F17 | Indicador de carregamento | "⏳ carregando..." no seletor enquanto API busca vozes                                |
+| F18 | Barra de progresso        | Progressbar indeterminada durante geração/salvamento                                  |
+| F19 | Detecção de idioma        | Sugere voz automaticamente após 1s digitando (langdetect)                             |
+| F20 | Texto longo               | Divide em chunks (>4500 chars) e concatena com ffmpeg                                 |
+| F21 | Retry automático          | Tenta até 4x com backoff para erro 529 (serviço sobrecarregado)                       |
+| F22 | Notificação desktop       | `notify-send` ao terminar reprodução e salvamento                                     |
+| F23 | Tray icon                 | Minimiza para bandeja do sistema (pystray)                                            |
+| F24 | Auto-update check         | Verifica atualizações via git ao iniciar (background)                                 |
+| F25 | Preferências persistentes | Voz, velocidade, volume, tema e fonte salvos em `~/.config/tts-app/prefs.json`        |
+| F26 | Atalhos de teclado        | `Ctrl+Enter` falar · `Ctrl+S` salvar · `Ctrl+O` abrir · `Esc` parar                   |
+| F27 | Instalação no sistema     | `make install-system` instala em `/opt/tts-app` com entrada GNOME e comando `tts-app` |
+| F28 | CI/CD                     | GitHub Actions roda testes em cada push/PR                                            |
 
-### Planejadas (backlog)
+### Backlog
 
-| #   | Funcionalidade                                       | Prioridade |
-| --- | ---------------------------------------------------- | ---------- |
-| B1  | Mais vozes disponíveis (listar via API edge_tts)     | Alta       |
-| B2  | Histórico de textos recentes                         | Média      |
-| B3  | Suporte a arquivos de texto (.txt) via drag-and-drop | Média      |
-| B4  | Botão de parar reprodução em andamento               | Alta       |
-| B5  | Tema claro / escuro configurável                     | Baixa      |
-| B6  | Empacotamento como `.deb` ou AppImage                | Alta       |
+| #   | Funcionalidade                      | Prioridade |
+| --- | ----------------------------------- | ---------- |
+| B1  | Drag & drop de arquivos .txt        | Média      |
+| B2  | Player com pausa e retrocesso       | Média      |
+| B3  | Empacotamento `.deb` / AppImage     | Alta       |
+| B4  | Suporte a múltiplos idiomas na UI   | Baixa      |
+| B5  | Integração com clipboard automático | Baixa      |
 
 ---
 
@@ -64,66 +83,81 @@ Usuários Linux que precisam ouvir textos (acessibilidade, revisão de conteúdo
 
 ```
 tts-app/
-├── main.py              # Interface gráfica (Tkinter)
-├── tts_utils.py         # Lógica de TTS: comandos, API, checagem
-├── requirements.txt     # Dependências Python (edge-tts)
-├── Makefile             # Atalhos: install, run, test, clean
+├── main.py                    # Interface gráfica (Tkinter)
+├── tts_utils.py               # Lógica TTS: API, CLI, split, retry, volume
+├── requirements.txt           # edge-tts, pystray, Pillow, langdetect
+├── Makefile                   # install, run, test, install-system, uninstall-system
+├── install.sh                 # Instala em /opt/tts-app + entrada GNOME
+├── uninstall.sh               # Remove instalação do sistema
+├── tts-app.desktop            # Entrada para launcher GNOME
+├── assets/
+│   └── tts-app.svg            # Ícone do app
 ├── scripts/
-│   └── check_deps.py    # Verifica dependências do sistema
+│   └── check_deps.py          # Verificação de dependências
 ├── tests/
-│   └── test_tts_utils.py # Testes unitários (pytest)
+│   ├── test_tts_utils.py      # Testes unitários
+│   └── test_integration.py   # Testes de integração
 └── .github/workflows/
-    └── ci.yml           # CI automático no GitHub Actions
+    └── ci.yml                 # CI automático
 ```
 
 ### Dependências
 
-| Dependência         | Tipo          | Função                     |
-| ------------------- | ------------- | -------------------------- |
-| `edge-tts`          | Python (pipx) | Engine TTS — gera o áudio  |
-| `ffmpeg` / `ffplay` | Sistema (apt) | Reprodução do áudio gerado |
-| `tkinter`           | Python stdlib | Interface gráfica          |
+| Dependência         | Tipo          | Função                             |
+| ------------------- | ------------- | ---------------------------------- |
+| `edge-tts`          | Python (pip)  | Engine TTS — gera o áudio          |
+| `ffmpeg` / `ffplay` | Sistema (apt) | Reprodução e concatenação de áudio |
+| `tkinter`           | Python stdlib | Interface gráfica                  |
+| `pystray`           | Python (pip)  | Tray icon no sistema               |
+| `Pillow`            | Python (pip)  | Imagem do tray icon                |
+| `langdetect`        | Python (pip)  | Detecção automática de idioma      |
 
 ### Fluxo principal (Falar)
 
 ```
 Usuário digita texto
-  → Clica "Falar"
-  → check_executables()
-  → generate_audio(voz, velocidade, texto, /tmp/tts_saida.mp3)
-      → API edge_tts.Communicate (preferencial)
+  → Clica "Falar" (ou Ctrl+Enter)
+  → check_executables() [feito na inicialização]
+  → split_text() — divide se >4500 chars
+  → generate_audio / generate_audio_long
+      → API edge_tts.Communicate com retry 529
       → fallback: CLI edge-tts
-  → ffplay reproduz o arquivo
-  → Status atualizado na UI
+  → ffplay reproduz com volume configurado
+  → notify-send ao concluir
+  → Status e botão atualizados na UI
 ```
 
 ---
 
 ## Requisitos Não-Funcionais
 
-| Requisito      | Critério                                                    |
-| -------------- | ----------------------------------------------------------- |
-| Plataforma     | Linux (Ubuntu/Debian e derivados)                           |
- | Performance    | Áudio gerado em menos de 5s para textos curtos (<200 chars) *medido em máquina de referência com conexão padrão* |
-| Confiabilidade | Fallback CLI quando API Python não disponível               |
-| Testabilidade  | Cobertura de testes em `tts_utils.py` via pytest + CI       |
-| Instalação     | Funcional com `make install && make run`                    |
+| Requisito      | Critério                                                                       |
+| -------------- | ------------------------------------------------------------------------------ |
+| Plataforma     | Linux (Ubuntu/Debian e derivados, Pop!\_OS)                                    |
+| Performance    | Áudio gerado em menos de 5s para textos curtos (<200 chars) com conexão padrão |
+| Confiabilidade | Retry automático (529), fallback CLI, checagem de deps na inicialização        |
+| Testabilidade  | 12+ testes unitários e de integração via pytest + CI GitHub Actions            |
+| Instalação     | Funcional com `make install-system`                                            |
+| Configuração   | Preferências persistidas em `~/.config/tts-app/`                               |
 
 ---
 
-## Critérios de Aceite (v1.0)
+## Critérios de Aceite
 
-- [ ] Usuário consegue ouvir um texto em menos de 5 segundos após clicar "Falar" (para textos <200 chars em máquina de referência)
-- [ ] Usuário consegue salvar o áudio em MP3 em qualquer pasta
-- [ ] App exibe mensagem de erro clara se `edge-tts` ou `ffplay` não estiver instalado
-- [ ] Testes passam no CI (GitHub Actions)
-- [ ] Funciona em Ubuntu 22.04+ com Python 3.10+
+- [x] Usuário ouve texto em menos de 5s após clicar "Falar" (<200 chars)
+- [x] Usuário salva áudio em MP3 em qualquer pasta
+- [x] App exibe erro claro se `edge-tts` ou `ffplay` não estiver instalado
+- [x] Testes passam no CI (GitHub Actions)
+- [x] Funciona em Ubuntu 22.04+ / Pop!\_OS com Python 3.10+
+- [x] App aparece no launcher GNOME após `make install-system`
+- [x] Texto longo é dividido e concatenado automaticamente
+- [x] Preferências são restauradas ao reabrir o app
 
 ---
 
-## Fora do Escopo (v1.0)
+## Fora do Escopo
 
 - Suporte a Windows ou macOS
 - Síntese de voz offline (sem internet)
-- Integração com clipboard automático
-- Player com controles (pausar, retroceder)
+- Player com controles de pausa e retrocesso
+- Integração com leitores de tela (AT-SPI)
