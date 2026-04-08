@@ -1,14 +1,15 @@
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox
 import subprocess
 import threading
 import logging
+import json
 import os
 import shutil
 
 from tts_utils import build_play_cmd, check_executables, generate_audio, list_voices
 
-# 9. Logging com destino definido
+# ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.WARNING,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -18,468 +19,416 @@ logging.basicConfig(
     ],
 )
 
-BG     = "#1e1e2e"
-BG2    = "#2a2a3e"
-ACCENT = "#7c3aed"
-ACCENT2= "#a855f7"
-TEXT   = "#e2e8f0"
-TEXT2  = "#94a3b8"
-GREEN  = "#22c55e"
-RED    = "#dc2626"
+# ── Preferências ──────────────────────────────────────────────────────────────
+CONFIG_DIR   = os.path.expanduser("~/.config/tts-app")
+PREFS_FILE   = os.path.join(CONFIG_DIR, "prefs.json")
+HISTORY_FILE = os.path.join(CONFIG_DIR, "history.json")
+MAX_HISTORY  = 20
 
-_play_proc   = None
-_executables = None  # 8. checado uma vez na inicialização
-
-# B2: history file for recent texts
-HISTORY_FILE = os.path.join(os.path.expanduser("~"), ".tts_app_history.txt")
-def load_history():
+def _load_json(path, default):
     try:
-        if not os.path.exists(HISTORY_FILE):
-            return []
-        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-            lines = [l.strip() for l in f.readlines() if l.strip()]
-            # most recent last in file; return newest first, limit 50
-            return list(reversed(lines))[:50]
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
     except Exception:
-        logging.exception("Failed to load history")
-        return []
+        return default
 
-def save_to_history(text: str):
-    try:
-        if not text or not text.strip():
-            return
-        # append simple one-line entry
-        with open(HISTORY_FILE, "a", encoding="utf-8") as f:
-            f.write(text.strip().replace("\n", " ") + "\n")
-    except Exception:
-        logging.exception("Failed to save history")
+def _save_json(path, data):
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
 
-# B5: theme setting (saved to file)
-THEME_FILE = os.path.join(os.path.expanduser("~"), ".tts_app_theme")
-def current_theme():
-    try:
-        if os.path.exists(THEME_FILE):
-            with open(THEME_FILE, "r", encoding="utf-8") as f:
-                return f.read().strip() or "dark"
-    except Exception:
-        pass
-    return "dark"
+def load_prefs():   return _load_json(PREFS_FILE, {})
+def save_prefs(**kw):
+    p = load_prefs(); p.update(kw); _save_json(PREFS_FILE, p)
+
+def load_history():  return _load_json(HISTORY_FILE, [])
+def add_to_history(text):
+    h = load_history()
+    if text in h: h.remove(text)
+    h.insert(0, text)
+    _save_json(HISTORY_FILE, h[:MAX_HISTORY])
+
+# ── Temas ─────────────────────────────────────────────────────────────────────
+THEMES = {
+    "dark":  dict(BG="#1e1e2e", BG2="#2a2a3e", ACCENT="#7c3aed", ACCENT2="#a855f7",
+                  TEXT="#e2e8f0", TEXT2="#94a3b8", GREEN="#22c55e", RED="#dc2626"),
+    "light": dict(BG="#f1f5f9", BG2="#ffffff",  ACCENT="#7c3aed", ACCENT2="#6d28d9",
+                  TEXT="#1e293b", TEXT2="#64748b", GREEN="#16a34a", RED="#dc2626"),
+}
+_prefs      = load_prefs()
+_theme_name = _prefs.get("theme", "dark")
+_font_size  = _prefs.get("font_size", 11)
+_themed     = []
+
+def T(key):  return THEMES[_theme_name][key]
+
+def reg(widget, **keys):
+    _themed.append((widget, keys)); return widget
+
+def apply_theme():
+    t = THEMES[_theme_name]
+    for w, keys in _themed:
+        try: w.config(**{k: t[v] for k, v in keys.items()})
+        except Exception: pass
 
 def toggle_theme():
-    t = current_theme()
-    new = "light" if t == "dark" else "dark"
-    try:
-        with open(THEME_FILE, "w", encoding="utf-8") as f:
-            f.write(new)
-    except Exception:
-        logging.exception("Failed to write theme file")
-    set_theme(new)
+    global _theme_name
+    _theme_name = "light" if _theme_name == "dark" else "dark"
+    apply_theme()
+    save_prefs(theme=_theme_name)
+    btn_theme.config(text="☀️" if _theme_name == "dark" else "🌙")
 
-
-def set_theme(theme: str):
-    """Apply theme dynamically to major widgets."""
-    # Define palettes
-    palettes = {
-        "dark": {
-            "BG": "#1e1e2e", "BG2": "#2a2a3e", "ACCENT": "#7c3aed", "ACCENT2": "#a855f7",
-            "TEXT": "#e2e8f0", "TEXT2": "#94a3b8", "GREEN": "#22c55e", "RED": "#dc2626",
-        },
-        "light": {
-            "BG": "#f8fafc", "BG2": "#eef2ff", "ACCENT": "#2563eb", "ACCENT2": "#1e40af",
-            "TEXT": "#0f172a", "TEXT2": "#475569", "GREEN": "#16a34a", "RED": "#dc2626",
-        }
-    }
-    pal = palettes.get(theme, palettes["dark"])
-
-    # Update global constants used elsewhere
-    global BG, BG2, ACCENT, ACCENT2, TEXT, TEXT2, GREEN, RED
-    BG = pal["BG"]; BG2 = pal["BG2"]; ACCENT = pal["ACCENT"]; ACCENT2 = pal["ACCENT2"]
-    TEXT = pal["TEXT"]; TEXT2 = pal["TEXT2"]; GREEN = pal["GREEN"]; RED = pal["RED"]
-
-    # Walk widgets and update common options
-    def apply_rec(widget):
-        # Frame
-        try:
-            cls = widget.winfo_class()
-            if cls in ("Frame", "TFrame"):
-                widget.configure(bg=BG)
-            elif cls in ("Label", "TLabel"):
-                widget.configure(bg=BG, fg=TEXT)
-            elif cls == "Button":
-                # don't override special button colors
-                widget.configure(bg=BG2, fg=TEXT)
-            elif cls == "Text":
-                widget.configure(bg=BG2, fg=TEXT, insertbackground=ACCENT2)
-            elif cls == "Scale":
-                widget.configure(bg=BG)
-        except Exception:
-            pass
-        for child in widget.winfo_children():
-            apply_rec(child)
-
-    apply_rec(root)
-
+# ── Estado ────────────────────────────────────────────────────────────────────
+_play_proc   = None
+_executables = None
 
 def _check_deps_startup():
     global _executables
     _executables = check_executables()
 
-
 def _deps_ok(need_ffplay=True):
     if not _executables["edge-tts"]:
-        messagebox.showerror("Erro", "Executável 'edge-tts' não encontrado.\nInstale via: pipx install edge-tts")
+        messagebox.showerror("Erro", "edge-tts não encontrado.\nInstale: pipx install edge-tts")
         return False
     if need_ffplay and not _executables["ffplay"]:
-        messagebox.showerror("Erro", "Executável 'ffplay' não encontrado.\nInstale via: sudo apt install ffmpeg")
+        messagebox.showerror("Erro", "ffplay não encontrado.\nInstale: sudo apt install ffmpeg")
         return False
     return True
 
-
+# ── Ações ─────────────────────────────────────────────────────────────────────
 def parar():
     global _play_proc
     if _play_proc and _play_proc.poll() is None:
         _play_proc.terminate()
     _play_proc = None
-    btn_falar.config(state="normal", text="▶   Falar", command=falar, bg=ACCENT)
+    btn_falar.config(state="normal", text="▶   Falar", command=falar, bg=T("ACCENT"))
     status_var.set("⏹ Parado")
 
+def _pb_show():
+    pb.pack(fill="x", padx=20, pady=(0, 4), before=text_frame)
+    pb.start(10)
+
+def _pb_hide():
+    pb.stop(); pb.pack_forget()
 
 def falar(_event=None):
     global _play_proc
     texto = text_box.get("1.0", tk.END).strip()
-    voz = voz_var.get()
-    velocidade = vel_var.get()
     if not texto:
-        messagebox.showwarning("Aviso", "Digite algum texto primeiro!")
-        return
-    if not _deps_ok(need_ffplay=True):
-        return
-
+        messagebox.showwarning("Aviso", "Digite algum texto primeiro!"); return
+    if not _deps_ok(): return
+    voz, vel, vol = voz_var.get(), vel_var.get(), vol_var.get()
     btn_falar.config(state="disabled", text="⏳  Gerando áudio...")
     status_var.set("🔊 Gerando áudio...")
+    root.after(0, _pb_show)
 
     def run():
         global _play_proc
         try:
-            rc, out_path = generate_audio(voz, velocidade, texto, None)
+            rc, out_path = generate_audio(voz, vel, texto, None)
         except Exception:
             logging.exception("generate_audio failed")
             rc, out_path = 1, None
-
         if rc != 0:
             root.after(0, lambda: [
-                btn_falar.config(state="normal", text="▶   Falar", command=falar, bg=ACCENT),
+                _pb_hide(),
+                btn_falar.config(state="normal", text="▶   Falar", command=falar, bg=T("ACCENT")),
                 status_var.set("❌ Falha ao gerar áudio"),
-                messagebox.showerror("Erro", "Falha ao gerar áudio com edge-tts"),
-            ])
-            return
-
-        # save to history on successful generation
-        save_to_history(texto)
-
-        play_cmd = build_play_cmd(out_path)
-        _play_proc = subprocess.Popen(play_cmd, stderr=subprocess.DEVNULL)
+                messagebox.showerror("Erro", "Falha ao gerar áudio.\nErro 529 = serviço sobrecarregado, tente novamente."),
+            ]); return
+        add_to_history(texto)
+        _play_proc = subprocess.Popen(build_play_cmd(out_path, volume=vol), stderr=subprocess.DEVNULL)
         root.after(0, lambda: [
-            btn_falar.config(state="normal", text="■  Parar", command=parar, bg=RED),
+            _pb_hide(),
+            btn_falar.config(state="normal", text="■  Parar", command=parar, bg=T("RED")),
             status_var.set("🔊 Reproduzindo..."),
         ])
         play_rc = _play_proc.wait()
         _play_proc = None
         root.after(0, lambda: [
-            btn_falar.config(state="normal", text="▶   Falar", command=falar, bg=ACCENT),
+            btn_falar.config(state="normal", text="▶   Falar", command=falar, bg=T("ACCENT")),
             status_var.set("✅ Pronto!" if play_rc == 0 else "⏹ Parado"),
         ])
         try:
-            if out_path and os.path.exists(out_path):
-                os.remove(out_path)
-        except Exception:
-            pass
+            if out_path and os.path.exists(out_path): os.remove(out_path)
+        except Exception: pass
 
     threading.Thread(target=run, daemon=True).start()
-
 
 def salvar(_event=None):
     texto = text_box.get("1.0", tk.END).strip()
-    voz = voz_var.get()
-    velocidade = vel_var.get()
     if not texto:
-        messagebox.showwarning("Aviso", "Digite algum texto primeiro!")
-        return
-    path = filedialog.asksaveasfilename(
-        defaultextension=".mp3",
-        filetypes=[("MP3", "*.mp3")],
-        initialfile="audio.mp3",
-    )
-    if not path:
-        return
-    if not _deps_ok(need_ffplay=False):
-        return
-
+        messagebox.showwarning("Aviso", "Digite algum texto primeiro!"); return
+    path = filedialog.asksaveasfilename(defaultextension=".mp3",
+                                        filetypes=[("MP3","*.mp3")], initialfile="audio.mp3")
+    if not path: return
+    if not _deps_ok(need_ffplay=False): return
     status_var.set("💾 Gerando áudio...")
-
+    root.after(0, _pb_show)
     def run():
         try:
-            rc, tmp_path = generate_audio(voz, velocidade, texto, None)
+            rc, tmp = generate_audio(voz_var.get(), vel_var.get(), texto, None)
         except Exception:
-            logging.exception("generate_audio failed on save")
-            rc = 1
-
+            logging.exception("generate_audio failed on save"); rc = 1
         if rc != 0:
-            root.after(0, lambda: [
-                status_var.set("❌ Falha ao salvar"),
-                messagebox.showerror("Erro", "Falha ao gerar o arquivo de áudio com edge-tts"),
-            ])
-            return
-
+            root.after(0, lambda: [_pb_hide(), status_var.set("❌ Falha ao salvar"),
+                messagebox.showerror("Erro", "Falha ao gerar áudio com edge-tts")]); return
         try:
-            shutil.move(tmp_path, path)
-            root.after(0, lambda: status_var.set(f"✅ Salvo em {os.path.basename(path)}"))
+            shutil.move(tmp, path)
+            root.after(0, lambda: [_pb_hide(), status_var.set(f"✅ Salvo em {os.path.basename(path)}")])
         except Exception:
-            logging.exception("Failed to move audio file")
-            root.after(0, lambda: [
-                status_var.set("❌ Erro ao mover arquivo"),
-                messagebox.showerror("Erro", f"Não foi possível salvar em {path}"),
-            ])
-
+            logging.exception("move failed")
+            root.after(0, lambda: [_pb_hide(), status_var.set("❌ Erro ao salvar"),
+                messagebox.showerror("Erro", f"Não foi possível salvar em {path}")])
     threading.Thread(target=run, daemon=True).start()
 
-
 def limpar():
-    # 7. Confirma antes de apagar
-    texto = text_box.get("1.0", tk.END).strip()
-    if texto and not messagebox.askyesno("Limpar", "Deseja apagar o texto?"):
-        return
-    text_box.delete("1.0", tk.END)
-    status_var.set("")
-    char_var.set("0 caracteres")
+    if text_box.get("1.0", tk.END).strip() and not messagebox.askyesno("Limpar","Deseja apagar o texto?"): return
+    text_box.delete("1.0", tk.END); status_var.set(""); char_var.set("0 caracteres")
 
+def abrir_txt(_event=None):
+    path = filedialog.askopenfilename(filetypes=[("Texto","*.txt"),("Todos","*.*")])
+    if not path: return
+    try:
+        with open(path, encoding="utf-8") as f: content = f.read()
+        text_box.delete("1.0", tk.END); text_box.insert("1.0", content)
+        _atualizar_contador()
+    except Exception as e:
+        messagebox.showerror("Erro", f"Não foi possível abrir:\n{e}")
 
 def colar_clipboard():
-    # 4. Cola da área de transferência
     try:
-        texto = root.clipboard_get()
-        text_box.delete("1.0", tk.END)
-        text_box.insert("1.0", texto)
+        text_box.delete("1.0", tk.END); text_box.insert("1.0", root.clipboard_get())
         _atualizar_contador()
-    except tk.TclError:
-        pass
+    except tk.TclError: pass
 
+def mostrar_historico():
+    hist = load_history()
+    if not hist:
+        messagebox.showinfo("Histórico","Nenhum texto no histórico ainda."); return
+    pop = tk.Toplevel(root)
+    pop.title("Histórico"); pop.configure(bg=T("BG")); pop.geometry("480x300")
+    pop.transient(root); pop.grab_set()
+    reg(tk.Label(pop, text="Textos recentes", font=("Segoe UI",10,"bold"),
+                 bg=T("BG"), fg=T("TEXT2")), bg="BG", fg="TEXT2").pack(anchor="w", padx=12, pady=(10,4))
+    fr = reg(tk.Frame(pop, bg=T("BG2"), highlightthickness=1, highlightbackground=T("ACCENT")),
+             bg="BG2", highlightbackground="ACCENT")
+    fr.pack(fill="both", expand=True, padx=12, pady=(0,6))
+    sb = tk.Scrollbar(fr); sb.pack(side="right", fill="y")
+    lb = tk.Listbox(fr, bg=T("BG2"), fg=T("TEXT"), selectbackground=T("ACCENT"),
+                    font=("Segoe UI",10), relief="flat", bd=0, yscrollcommand=sb.set)
+    for item in hist: lb.insert(tk.END, item[:100].replace("\n"," "))
+    lb.pack(fill="both", expand=True); sb.config(command=lb.yview)
+    def usar():
+        sel = lb.curselection()
+        if not sel: return
+        text_box.delete("1.0", tk.END); text_box.insert("1.0", hist[sel[0]])
+        _atualizar_contador(); pop.destroy()
+    lb.bind("<Double-Button-1>", lambda e: usar())
+    reg(tk.Button(pop, text="Usar", command=usar, bg=T("ACCENT"), fg="white",
+                  font=("Segoe UI",10,"bold"), relief="flat", padx=20, pady=6, cursor="hand2"),
+        bg="ACCENT").pack(pady=(0,10))
 
 def _atualizar_contador(_event=None):
-    # 1. Contador de caracteres em tempo real
-    texto = text_box.get("1.0", tk.END).strip()
-    char_var.set(f"{len(texto)} caracteres")
+    char_var.set(f"{len(text_box.get('1.0', tk.END).strip())} caracteres")
 
+def _ajustar_fonte(delta):
+    global _font_size
+    _font_size = max(8, min(24, _font_size + delta))
+    text_box.config(font=("Segoe UI", _font_size))
+    save_prefs(font_size=_font_size)
+
+# ── Seletor de Voz ────────────────────────────────────────────────────────────
+LANG_TABS   = ["","pt","en","es","fr","de","ja","zh"]
+LANG_LABELS = ["ALL","PT","EN","ES","FR","DE","JA","ZH"]
 
 class VozSelector(tk.Frame):
     def __init__(self, parent, variable, values, **kwargs):
-        super().__init__(parent, bg=BG2, highlightthickness=1, highlightbackground=ACCENT, **kwargs)
-        self.variable = variable
-        self.values = values
-        self.popup = None
-        self.btn = tk.Button(
-            self, textvariable=variable, bg=BG2, fg=TEXT,
-            font=("Segoe UI", 10), relief="flat", anchor="w",
-            padx=10, cursor="hand2", activebackground=BG2,
-            activeforeground=ACCENT2, command=self.toggle_popup,
-        )
+        super().__init__(parent, bg=T("BG2"), highlightthickness=1, highlightbackground=T("ACCENT"), **kwargs)
+        self.variable = variable; self.values = values; self.popup = None
+        self.btn = tk.Button(self, textvariable=variable, bg=T("BG2"), fg=T("TEXT"),
+                             font=("Segoe UI",10), relief="flat", anchor="w", padx=10, cursor="hand2",
+                             activebackground=T("BG2"), activeforeground=T("ACCENT2"), command=self.toggle_popup)
         self.btn.pack(side="left", fill="x", expand=True, ipady=6)
-        arrow = tk.Label(self, text="▾", bg=BG2, fg=ACCENT2, font=("Segoe UI", 12), cursor="hand2")
-        arrow.pack(side="right", padx=8)
-        arrow.bind("<Button-1>", lambda e: self.toggle_popup())
+        self.arrow = tk.Label(self, text="▾", bg=T("BG2"), fg=T("ACCENT2"), font=("Segoe UI",12), cursor="hand2")
+        self.arrow.pack(side="right", padx=8)
+        self.arrow.bind("<Button-1>", lambda e: self.toggle_popup())
 
-    def update_values(self, values):
-        self.values = values
+    def update_values(self, values): self.values = values
 
     def toggle_popup(self):
         if self.popup and self.popup.winfo_exists():
-            self.popup.destroy()
-            self.popup = None
-            return
+            self.popup.destroy(); self.popup = None; return
         self.show_popup()
 
     def show_popup(self):
-        x = self.winfo_rootx()
-        y = self.winfo_rooty() + self.winfo_height()
-        w = self.winfo_width()
-
-        self.popup = tk.Toplevel()
-        self.popup.wm_overrideredirect(True)
-        self.popup.configure(bg=BG2)
-
-        outer = tk.Frame(self.popup, bg=BG2, highlightthickness=1, highlightbackground=ACCENT)
+        x, y, w = self.winfo_rootx(), self.winfo_rooty()+self.winfo_height(), self.winfo_width()
+        self.popup = tk.Toplevel(); self.popup.wm_overrideredirect(True); self.popup.configure(bg=T("BG2"))
+        outer = tk.Frame(self.popup, bg=T("BG2"), highlightthickness=1, highlightbackground=T("ACCENT"))
         outer.pack(fill="both", expand=True)
-
-        # 3. Filtro de vozes
+        tabs = tk.Frame(outer, bg=T("BG2")); tabs.pack(fill="x", padx=4, pady=(4,0))
         filter_var = tk.StringVar()
-        filter_entry = tk.Entry(
-            outer, textvariable=filter_var, bg=BG2, fg=TEXT,
-            insertbackground=ACCENT2, relief="flat", font=("Segoe UI", 10),
-        )
-        filter_entry.pack(fill="x", padx=6, pady=4)
-        tk.Frame(outer, bg=ACCENT, height=1).pack(fill="x")
-
-        list_frame = tk.Frame(outer, bg=BG2)
-        list_frame.pack(fill="both", expand=True)
-
-        def render_buttons(filter_text=""):
-            for child in list_frame.winfo_children():
-                child.destroy()
-            filtered = [v for v in self.values if filter_text.lower() in v.lower()]
+        for lang, label in zip(LANG_TABS, LANG_LABELS):
+            tk.Button(tabs, text=label, bg=T("BG2"), fg=T("TEXT2"), font=("Segoe UI",8),
+                      relief="flat", padx=5, pady=2, cursor="hand2",
+                      activebackground=T("ACCENT"), activeforeground="white",
+                      command=lambda l=lang: filter_var.set(l)).pack(side="left", padx=1)
+        tk.Frame(outer, bg=T("ACCENT"), height=1).pack(fill="x", pady=(4,0))
+        fe = tk.Entry(outer, textvariable=filter_var, bg=T("BG2"), fg=T("TEXT"),
+                      insertbackground=T("ACCENT2"), relief="flat", font=("Segoe UI",10))
+        fe.pack(fill="x", padx=6, pady=4)
+        tk.Frame(outer, bg=T("ACCENT"), height=1).pack(fill="x")
+        lf = tk.Frame(outer, bg=T("BG2")); lf.pack(fill="both", expand=True)
+        def render(ft=""):
+            for c in lf.winfo_children(): c.destroy()
+            filtered = [v for v in self.values if ft.lower() in v.lower()]
             for v in filtered:
-                def make_cmd(val):
-                    def cmd():
-                        self.variable.set(val)
-                        self.popup.destroy()
-                        self.popup = None
+                def make(val):
+                    def cmd(): self.variable.set(val); self.popup.destroy(); self.popup = None
                     return cmd
-                tk.Button(
-                    list_frame, text=v, bg=BG2, fg=TEXT, font=("Segoe UI", 10),
-                    relief="flat", anchor="w", padx=12, pady=4, cursor="hand2",
-                    activebackground=ACCENT, activeforeground="white",
-                    command=make_cmd(v),
-                ).pack(fill="x")
-            h = min(len(filtered) * 32 + 40, 240)
-            self.popup.geometry(f"{w}x{h}+{x}+{y}")
-
-        filter_var.trace_add("write", lambda *_: render_buttons(filter_var.get()))
-        render_buttons()
-
+                tk.Button(lf, text=v, bg=T("BG2"), fg=T("TEXT"), font=("Segoe UI",10),
+                          relief="flat", anchor="w", padx=12, pady=4, cursor="hand2",
+                          activebackground=T("ACCENT"), activeforeground="white",
+                          command=make(v)).pack(fill="x")
+            self.popup.geometry(f"{w}x{min(len(filtered)*32+100,280)}+{x}+{y}")
+        filter_var.trace_add("write", lambda *_: render(filter_var.get()))
+        render()
         self.popup.bind("<FocusOut>", lambda e: self.popup.destroy() if self.popup and self.popup.winfo_exists() else None)
-        filter_entry.focus_set()
+        fe.focus_set()
 
-
-# --- UI ---
-
+# ── Janela ────────────────────────────────────────────────────────────────────
 root = tk.Tk()
 root.title("Text to Speech")
-root.geometry("560x540")
-root.configure(bg=BG)
-root.minsize(480, 480)  # 5. janela redimensionável
+root.geometry("560x620")
+root.minsize(480, 520)
 root.resizable(True, True)
+reg(root, bg="BG")
 
-tk.Frame(root, bg=ACCENT, height=4).pack(fill="x")
+reg(tk.Frame(root, bg=T("ACCENT"), height=4), bg="ACCENT").pack(fill="x")
 
-title_frame = tk.Frame(root, bg=BG, pady=12)
+title_frame = reg(tk.Frame(root, bg=T("BG"), pady=10), bg="BG")
 title_frame.pack(fill="x")
-tk.Label(title_frame, text="🎙 Text to Speech", font=("Segoe UI", 16, "bold"), bg=BG, fg=TEXT).pack()
-tk.Label(title_frame, text="Converta texto em voz natural", font=("Segoe UI", 9), bg=BG, fg=TEXT2).pack()
+title_row = reg(tk.Frame(title_frame, bg=T("BG")), bg="BG")
+title_row.pack()
+reg(tk.Label(title_row, text="🎙 Text to Speech", font=("Segoe UI",16,"bold"), bg=T("BG"), fg=T("TEXT")),
+    bg="BG", fg="TEXT").pack(side="left", padx=(0,8))
+btn_theme = reg(tk.Button(title_row, text="☀️" if _theme_name=="dark" else "🌙",
+                           command=toggle_theme, bg=T("BG"), fg=T("TEXT2"),
+                           font=("Segoe UI",11), relief="flat", cursor="hand2",
+                           activebackground=T("BG"), activeforeground=T("ACCENT2")),
+                bg="BG", activebackground="BG", fg="TEXT2", activeforeground="ACCENT2")
+btn_theme.pack(side="left")
+reg(tk.Label(title_frame, text="Converta texto em voz natural", font=("Segoe UI",9), bg=T("BG"), fg=T("TEXT2")),
+    bg="BG", fg="TEXT2").pack()
 
-# History dropdown (B2)
-history_var = tk.StringVar()
-history_menu = tk.OptionMenu(title_frame, history_var, *load_history())
-history_menu.config(bg=BG, fg=TEXT, activebackground=BG2)
-history_menu.pack(side="right", padx=10)
+style = ttk.Style(); style.theme_use("clam")
+style.configure("TTS.Horizontal.TProgressbar", troughcolor=T("BG2"), background=T("ACCENT"), thickness=5)
+pb = ttk.Progressbar(root, mode="indeterminate", style="TTS.Horizontal.TProgressbar")
 
-# Theme toggle (B5)
-tk.Button(title_frame, text="Tema", command=toggle_theme, bg=BG2, fg=TEXT2, relief="flat").pack(side="right", padx=6)
+text_frame = reg(tk.Frame(root, bg=T("BG2"), bd=0, highlightthickness=1, highlightbackground=T("ACCENT")),
+                 bg="BG2", highlightbackground="ACCENT")
+text_frame.pack(padx=20, pady=(0,4), fill="both", expand=True)
 
-text_frame = tk.Frame(root, bg=BG2, bd=0, highlightthickness=1, highlightbackground=ACCENT)
-text_frame.pack(padx=20, pady=(0, 4), fill="both", expand=True)
+th = reg(tk.Frame(text_frame, bg=T("BG2")), bg="BG2")
+th.pack(fill="x", padx=10, pady=(8,0))
+reg(tk.Label(th, text="Texto", font=("Segoe UI",9,"bold"), bg=T("BG2"), fg=T("TEXT2")),
+    bg="BG2", fg="TEXT2").pack(side="left")
 
-text_header = tk.Frame(text_frame, bg=BG2)
-text_header.pack(fill="x", padx=10, pady=(8, 0))
-tk.Label(text_header, text="Texto", font=("Segoe UI", 9, "bold"), bg=BG2, fg=TEXT2).pack(side="left")
+for icon, cmd in [("📋", colar_clipboard), ("📂", abrir_txt), ("🕘", mostrar_historico),
+                   ("A-", lambda: _ajustar_fonte(-1)), ("A+", lambda: _ajustar_fonte(+1))]:
+    reg(tk.Button(th, text=icon, command=cmd, bg=T("BG2"), fg=T("TEXT2"),
+                  font=("Segoe UI", 9 if len(icon)==1 else 8), relief="flat", cursor="hand2",
+                  padx=5, activebackground=T("BG2"), activeforeground=T("ACCENT2")),
+        bg="BG2", fg="TEXT2", activebackground="BG2", activeforeground="ACCENT2").pack(side="right", padx=1)
 
-# 4. Botão colar clipboard
-tk.Button(
-    text_header, text="📋 Colar", command=colar_clipboard,
-    bg=BG2, fg=TEXT2, font=("Segoe UI", 8), relief="flat",
-    cursor="hand2", padx=6, pady=0, activebackground=BG2, activeforeground=ACCENT2,
-).pack(side="right")
-
-# B3: Botão Abrir .txt
-def abrir_txt():
-    path = filedialog.askopenfilename(filetypes=[("Text files", "*.txt")])
-    if not path:
-        return
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            content = f.read()
-        text_box.delete("1.0", tk.END)
-        text_box.insert("1.0", content)
-        _atualizar_contador()
-    except Exception:
-        logging.exception("Failed to open txt file")
-
-tk.Button(text_header, text="📂 Abrir", command=abrir_txt, bg=BG2, fg=TEXT2, font=("Segoe UI", 8), relief="flat", cursor="hand2").pack(side="right", padx=(0,6))
-
-text_box = tk.Text(
-    text_frame, height=8, font=("Segoe UI", 11), bg=BG2, fg=TEXT,
-    insertbackground=ACCENT2, relief="flat", bd=0, padx=10, pady=8,
-    wrap="word", selectbackground=ACCENT,
-)
-text_box.pack(fill="both", expand=True, padx=2, pady=(2, 0))
+text_box = tk.Text(text_frame, height=8, font=("Segoe UI",_font_size), bg=T("BG2"), fg=T("TEXT"),
+                   insertbackground=T("ACCENT2"), relief="flat", bd=0, padx=10, pady=8,
+                   wrap="word", selectbackground=T("ACCENT"), undo=True, maxundo=50)
+reg(text_box, bg="BG2", fg="TEXT", insertbackground="ACCENT2", selectbackground="ACCENT")
+text_box.pack(fill="both", expand=True, padx=2, pady=(2,0))
 text_box.bind("<KeyRelease>", _atualizar_contador)
 
-# 1. Contador de caracteres
 char_var = tk.StringVar(value="0 caracteres")
-tk.Label(text_frame, textvariable=char_var, font=("Segoe UI", 8), bg=BG2, fg=TEXT2, anchor="e").pack(
-    fill="x", padx=10, pady=(0, 6)
-)
+reg(tk.Label(text_frame, textvariable=char_var, font=("Segoe UI",8), bg=T("BG2"), fg=T("TEXT2"), anchor="e"),
+    bg="BG2", fg="TEXT2").pack(fill="x", padx=10, pady=(0,6))
 
-ctrl_frame = tk.Frame(root, bg=BG)
-ctrl_frame.pack(padx=20, fill="x")
+ctrl_frame = reg(tk.Frame(root, bg=T("BG")), bg="BG")
+ctrl_frame.pack(padx=20, fill="x", pady=(4,0))
 
-left = tk.Frame(ctrl_frame, bg=BG)
-left.pack(side="left", fill="x", expand=True, padx=(0, 10))
-tk.Label(left, text="🗣 Voz", font=("Segoe UI", 9, "bold"), bg=BG, fg=TEXT2).pack(anchor="w")
-voz_var = tk.StringVar(value="pt-BR-FranciscaNeural")
-vozes = ["pt-BR-FranciscaNeural", "pt-BR-AntonioNeural", "en-US-JennyNeural", "en-US-GuyNeural", "es-ES-ElviraNeural"]
-voz_selector = VozSelector(left, voz_var, vozes)
-voz_selector.pack(fill="x", pady=(4, 0))
+left = reg(tk.Frame(ctrl_frame, bg=T("BG")), bg="BG")
+left.pack(side="left", fill="x", expand=True, padx=(0,10))
+reg(tk.Label(left, text="🗣 Voz", font=("Segoe UI",9,"bold"), bg=T("BG"), fg=T("TEXT2")),
+    bg="BG", fg="TEXT2").pack(anchor="w")
+voz_var = tk.StringVar(value=_prefs.get("voice","pt-BR-FranciscaNeural"))
+voz_selector = VozSelector(left, voz_var, ["pt-BR-FranciscaNeural","pt-BR-AntonioNeural",
+                                            "en-US-JennyNeural","en-US-GuyNeural","es-ES-ElviraNeural"])
+voz_selector.pack(fill="x", pady=(4,0))
 
-right = tk.Frame(ctrl_frame, bg=BG)
+right = reg(tk.Frame(ctrl_frame, bg=T("BG")), bg="BG")
 right.pack(side="right")
-tk.Label(right, text="⚡ Velocidade", font=("Segoe UI", 9, "bold"), bg=BG, fg=TEXT2).pack(anchor="w")
-vel_var = tk.IntVar(value=0)
-vel_label = tk.Label(right, text="0%", font=("Segoe UI", 9), bg=BG, fg=ACCENT2, width=5)
+
+reg(tk.Label(right, text="⚡ Velocidade", font=("Segoe UI",9,"bold"), bg=T("BG"), fg=T("TEXT2")),
+    bg="BG", fg="TEXT2").pack(anchor="w")
+vel_var = tk.IntVar(value=_prefs.get("speed",0))
+vel_label = reg(tk.Label(right, text="0%", font=("Segoe UI",9), bg=T("BG"), fg=T("ACCENT2"), width=5),
+                bg="BG", fg="ACCENT2")
 vel_label.pack(anchor="e")
+def _upd_vel(v):
+    val = int(float(v)); vel_label.config(text=f"{val:+d}%" if val != 0 else "0%")
+reg(tk.Scale(right, from_=-50, to=50, orient="horizontal", variable=vel_var, length=160,
+             bg=T("BG"), fg=T("TEXT"), troughcolor=T("BG2"), activebackground=T("ACCENT2"),
+             highlightthickness=0, bd=0, showvalue=False, command=_upd_vel),
+    bg="BG", fg="TEXT", troughcolor="BG2", activebackground="ACCENT2").pack()
+_upd_vel(vel_var.get())
 
-def update_label(v):
-    val = int(float(v))
-    vel_label.config(text=f"{val:+d}%" if val != 0 else "0%")
+reg(tk.Label(right, text="🔊 Volume", font=("Segoe UI",9,"bold"), bg=T("BG"), fg=T("TEXT2")),
+    bg="BG", fg="TEXT2").pack(anchor="w", pady=(6,0))
+vol_var = tk.IntVar(value=_prefs.get("volume",100))
+vol_label = reg(tk.Label(right, text=f"{_prefs.get('volume',100)}%", font=("Segoe UI",9), bg=T("BG"), fg=T("ACCENT2"), width=5),
+                bg="BG", fg="ACCENT2")
+vol_label.pack(anchor="e")
+def _upd_vol(v): vol_label.config(text=f"{int(float(v))}%")
+reg(tk.Scale(right, from_=0, to=100, orient="horizontal", variable=vol_var, length=160,
+             bg=T("BG"), fg=T("TEXT"), troughcolor=T("BG2"), activebackground=T("ACCENT2"),
+             highlightthickness=0, bd=0, showvalue=False, command=_upd_vol),
+    bg="BG", fg="TEXT", troughcolor="BG2", activebackground="ACCENT2").pack()
 
-tk.Scale(
-    right, from_=-50, to=50, orient="horizontal", variable=vel_var, length=160,
-    bg=BG, fg=TEXT, troughcolor=BG2, activebackground=ACCENT2,
-    highlightthickness=0, bd=0, showvalue=False, command=update_label,
-).pack()
-
-btn_frame = tk.Frame(root, bg=BG)
+btn_frame = reg(tk.Frame(root, bg=T("BG")), bg="BG")
 btn_frame.pack(pady=12, padx=20, fill="x")
-tk.Button(
-    btn_frame, text="🗑 Limpar", command=limpar, bg=BG2, fg=TEXT2,
-    font=("Segoe UI", 10), relief="flat", padx=15, pady=8, cursor="hand2",
-).pack(side="left")
-tk.Button(
-    btn_frame, text="💾 Salvar MP3", command=salvar, bg=BG2, fg=ACCENT2,
-    font=("Segoe UI", 10, "bold"), relief="flat", padx=15, pady=8, cursor="hand2",
-).pack(side="left", padx=10)
-btn_falar = tk.Button(
-    btn_frame, text="▶   Falar", command=falar, bg=ACCENT, fg="white",
-    font=("Segoe UI", 11, "bold"), relief="flat", padx=25, pady=8, cursor="hand2",
-)
+reg(tk.Button(btn_frame, text="🗑 Limpar", command=limpar, bg=T("BG2"), fg=T("TEXT2"),
+              font=("Segoe UI",10), relief="flat", padx=15, pady=8, cursor="hand2"),
+    bg="BG2", fg="TEXT2").pack(side="left")
+reg(tk.Button(btn_frame, text="💾 Salvar MP3", command=salvar, bg=T("BG2"), fg=T("ACCENT2"),
+              font=("Segoe UI",10,"bold"), relief="flat", padx=15, pady=8, cursor="hand2"),
+    bg="BG2", fg="ACCENT2").pack(side="left", padx=10)
+btn_falar = reg(tk.Button(btn_frame, text="▶   Falar", command=falar, bg=T("ACCENT"), fg="white",
+                            font=("Segoe UI",11,"bold"), relief="flat", padx=25, pady=8, cursor="hand2"),
+                bg="ACCENT")
 btn_falar.pack(side="right")
 
 status_var = tk.StringVar()
-tk.Label(root, textvariable=status_var, font=("Segoe UI", 9), bg=BG, fg=GREEN).pack(pady=(0, 8))
+reg(tk.Label(root, textvariable=status_var, font=("Segoe UI",9), bg=T("BG"), fg=T("GREEN")),
+    bg="BG", fg="GREEN").pack(pady=(0,8))
 
-# 2. Atalhos de teclado
 root.bind("<Control-Return>", falar)
 root.bind("<Control-s>", salvar)
+root.bind("<Control-o>", abrir_txt)
 root.bind("<Escape>", lambda e: parar())
-root.bind("<Control-o>", lambda e: abrir_txt())
+root.bind("<Control-z>", lambda e: text_box.edit_undo())
+root.bind("<Control-y>", lambda e: text_box.edit_redo())
 
-# 8. Checar deps uma vez na inicialização
+def _on_close():
+    save_prefs(voice=voz_var.get(), speed=vel_var.get(), volume=vol_var.get(),
+               theme=_theme_name, font_size=_font_size)
+    root.destroy()
+root.protocol("WM_DELETE_WINDOW", _on_close)
+
 _check_deps_startup()
 
-# Carregar vozes dinamicamente
-def _carregar_vozes():
-    vozes_api = list_voices()
-    if vozes_api:
-        root.after(0, lambda: voz_selector.update_values(vozes_api))
-
-threading.Thread(target=_carregar_vozes, daemon=True).start()
+def _load_voices_bg():
+    voices = list_voices()
+    if voices:
+        root.after(0, lambda: voz_selector.update_values(voices))
+threading.Thread(target=_load_voices_bg, daemon=True).start()
 
 root.mainloop()
