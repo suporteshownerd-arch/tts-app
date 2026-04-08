@@ -30,6 +30,95 @@ RED    = "#dc2626"
 _play_proc   = None
 _executables = None  # 8. checado uma vez na inicialização
 
+# B2: history file for recent texts
+HISTORY_FILE = os.path.join(os.path.expanduser("~"), ".tts_app_history.txt")
+def load_history():
+    try:
+        if not os.path.exists(HISTORY_FILE):
+            return []
+        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+            lines = [l.strip() for l in f.readlines() if l.strip()]
+            # most recent last in file; return newest first, limit 50
+            return list(reversed(lines))[:50]
+    except Exception:
+        logging.exception("Failed to load history")
+        return []
+
+def save_to_history(text: str):
+    try:
+        if not text or not text.strip():
+            return
+        # append simple one-line entry
+        with open(HISTORY_FILE, "a", encoding="utf-8") as f:
+            f.write(text.strip().replace("\n", " ") + "\n")
+    except Exception:
+        logging.exception("Failed to save history")
+
+# B5: theme setting (saved to file)
+THEME_FILE = os.path.join(os.path.expanduser("~"), ".tts_app_theme")
+def current_theme():
+    try:
+        if os.path.exists(THEME_FILE):
+            with open(THEME_FILE, "r", encoding="utf-8") as f:
+                return f.read().strip() or "dark"
+    except Exception:
+        pass
+    return "dark"
+
+def toggle_theme():
+    t = current_theme()
+    new = "light" if t == "dark" else "dark"
+    try:
+        with open(THEME_FILE, "w", encoding="utf-8") as f:
+            f.write(new)
+    except Exception:
+        logging.exception("Failed to write theme file")
+    set_theme(new)
+
+
+def set_theme(theme: str):
+    """Apply theme dynamically to major widgets."""
+    # Define palettes
+    palettes = {
+        "dark": {
+            "BG": "#1e1e2e", "BG2": "#2a2a3e", "ACCENT": "#7c3aed", "ACCENT2": "#a855f7",
+            "TEXT": "#e2e8f0", "TEXT2": "#94a3b8", "GREEN": "#22c55e", "RED": "#dc2626",
+        },
+        "light": {
+            "BG": "#f8fafc", "BG2": "#eef2ff", "ACCENT": "#2563eb", "ACCENT2": "#1e40af",
+            "TEXT": "#0f172a", "TEXT2": "#475569", "GREEN": "#16a34a", "RED": "#dc2626",
+        }
+    }
+    pal = palettes.get(theme, palettes["dark"])
+
+    # Update global constants used elsewhere
+    global BG, BG2, ACCENT, ACCENT2, TEXT, TEXT2, GREEN, RED
+    BG = pal["BG"]; BG2 = pal["BG2"]; ACCENT = pal["ACCENT"]; ACCENT2 = pal["ACCENT2"]
+    TEXT = pal["TEXT"]; TEXT2 = pal["TEXT2"]; GREEN = pal["GREEN"]; RED = pal["RED"]
+
+    # Walk widgets and update common options
+    def apply_rec(widget):
+        # Frame
+        try:
+            cls = widget.winfo_class()
+            if cls in ("Frame", "TFrame"):
+                widget.configure(bg=BG)
+            elif cls in ("Label", "TLabel"):
+                widget.configure(bg=BG, fg=TEXT)
+            elif cls == "Button":
+                # don't override special button colors
+                widget.configure(bg=BG2, fg=TEXT)
+            elif cls == "Text":
+                widget.configure(bg=BG2, fg=TEXT, insertbackground=ACCENT2)
+            elif cls == "Scale":
+                widget.configure(bg=BG)
+        except Exception:
+            pass
+        for child in widget.winfo_children():
+            apply_rec(child)
+
+    apply_rec(root)
+
 
 def _check_deps_startup():
     global _executables
@@ -84,6 +173,9 @@ def falar(_event=None):
                 messagebox.showerror("Erro", "Falha ao gerar áudio com edge-tts"),
             ])
             return
+
+        # save to history on successful generation
+        save_to_history(texto)
 
         play_cmd = build_play_cmd(out_path)
         _play_proc = subprocess.Popen(play_cmd, stderr=subprocess.DEVNULL)
@@ -273,6 +365,15 @@ title_frame.pack(fill="x")
 tk.Label(title_frame, text="🎙 Text to Speech", font=("Segoe UI", 16, "bold"), bg=BG, fg=TEXT).pack()
 tk.Label(title_frame, text="Converta texto em voz natural", font=("Segoe UI", 9), bg=BG, fg=TEXT2).pack()
 
+# History dropdown (B2)
+history_var = tk.StringVar()
+history_menu = tk.OptionMenu(title_frame, history_var, *load_history())
+history_menu.config(bg=BG, fg=TEXT, activebackground=BG2)
+history_menu.pack(side="right", padx=10)
+
+# Theme toggle (B5)
+tk.Button(title_frame, text="Tema", command=toggle_theme, bg=BG2, fg=TEXT2, relief="flat").pack(side="right", padx=6)
+
 text_frame = tk.Frame(root, bg=BG2, bd=0, highlightthickness=1, highlightbackground=ACCENT)
 text_frame.pack(padx=20, pady=(0, 4), fill="both", expand=True)
 
@@ -286,6 +387,22 @@ tk.Button(
     bg=BG2, fg=TEXT2, font=("Segoe UI", 8), relief="flat",
     cursor="hand2", padx=6, pady=0, activebackground=BG2, activeforeground=ACCENT2,
 ).pack(side="right")
+
+# B3: Botão Abrir .txt
+def abrir_txt():
+    path = filedialog.askopenfilename(filetypes=[("Text files", "*.txt")])
+    if not path:
+        return
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+        text_box.delete("1.0", tk.END)
+        text_box.insert("1.0", content)
+        _atualizar_contador()
+    except Exception:
+        logging.exception("Failed to open txt file")
+
+tk.Button(text_header, text="📂 Abrir", command=abrir_txt, bg=BG2, fg=TEXT2, font=("Segoe UI", 8), relief="flat", cursor="hand2").pack(side="right", padx=(0,6))
 
 text_box = tk.Text(
     text_frame, height=8, font=("Segoe UI", 11), bg=BG2, fg=TEXT,
@@ -352,6 +469,7 @@ tk.Label(root, textvariable=status_var, font=("Segoe UI", 9), bg=BG, fg=GREEN).p
 root.bind("<Control-Return>", falar)
 root.bind("<Control-s>", salvar)
 root.bind("<Escape>", lambda e: parar())
+root.bind("<Control-o>", lambda e: abrir_txt())
 
 # 8. Checar deps uma vez na inicialização
 _check_deps_startup()
