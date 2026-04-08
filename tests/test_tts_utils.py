@@ -1,6 +1,5 @@
 import json
 import time
-import pytest
 from unittest.mock import patch, AsyncMock, MagicMock
 from tts_utils import build_tts_cmd, build_play_cmd, check_executables, generate_audio
 
@@ -44,7 +43,7 @@ def test_generate_audio_uses_api_with_rate():
         rc, path = generate_audio("pt-BR-FranciscaNeural", 25, "Olá", "/tmp/out.mp3")
 
     assert rc == 0
-    mock_communicate.assert_called_once_with("Olá", "pt-BR-FranciscaNeural", rate="+25%")
+    mock_communicate.assert_called_once_with("Olá", "pt-BR-FranciscaNeural", rate="+25%", pitch="+0Hz")
 
 
 def test_generate_audio_api_rate_zero():
@@ -59,7 +58,7 @@ def test_generate_audio_api_rate_zero():
         rc, path = generate_audio("pt-BR-FranciscaNeural", 0, "Olá", "/tmp/out.mp3")
 
     assert rc == 0
-    mock_communicate.assert_called_once_with("Olá", "pt-BR-FranciscaNeural", rate="+0%")
+    mock_communicate.assert_called_once_with("Olá", "pt-BR-FranciscaNeural", rate="+0%", pitch="+0Hz")
 
 
 # ── Voice cache tests ─────────────────────────────────────────────────────────

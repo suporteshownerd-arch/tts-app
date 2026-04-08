@@ -36,46 +36,63 @@ Usuários Linux que precisam ouvir textos (acessibilidade, revisão de conteúdo
 
 ### Implementadas (v1.x)
 
-| #   | Funcionalidade            | Descrição                                                                             |
-| --- | ------------------------- | ------------------------------------------------------------------------------------- |
-| F1  | Entrada de texto          | Área multilinha com undo/redo (Ctrl+Z/Y), contador de caracteres                      |
-| F2  | Seleção de voz            | Dropdown com vozes neurais carregadas dinamicamente via API                           |
-| F3  | Controle de velocidade    | Slider de -50% a +50%                                                                 |
-| F4  | Controle de volume        | Slider de 0% a 100%                                                                   |
-| F5  | Reprodução direta         | Botão "Falar" gera e reproduz; vira "■ Parar" durante reprodução                      |
-| F6  | Salvar MP3                | Exporta o áudio para arquivo `.mp3`                                                   |
-| F7  | Limpar texto              | Com confirmação quando há conteúdo                                                    |
-| F8  | Checagem de dependências  | Verifica `edge-tts` e `ffplay` uma vez na inicialização                               |
-| F9  | Abrir arquivo .txt        | Botão 📂 e atalho `Ctrl+O`                                                            |
-| F10 | Colar clipboard           | Botão 📋 para colar diretamente                                                       |
-| F11 | Histórico de textos       | Últimos 20 textos salvos em `~/.config/tts-app/history.json`                          |
-| F12 | Fila de exportação        | Botão 📤 para exportar múltiplos textos em lote                                       |
-| F13 | Tema claro/escuro         | Toggle ☀️/🌙 com preferência persistente                                              |
-| F14 | Tamanho de fonte          | Botões A- / A+ no textarea                                                            |
-| F15 | Filtro de vozes           | Campo de busca + abas de idioma (ALL PT EN ES FR DE JA ZH)                            |
-| F16 | Vozes recentes            | Últimas 3 vozes usadas fixadas no topo do dropdown                                    |
-| F17 | Indicador de carregamento | "⏳ carregando..." no seletor enquanto API busca vozes                                |
-| F18 | Barra de progresso        | Progressbar indeterminada durante geração/salvamento                                  |
-| F19 | Detecção de idioma        | Sugere voz automaticamente após 1s digitando (langdetect)                             |
-| F20 | Texto longo               | Divide em chunks (>4500 chars) e concatena com ffmpeg                                 |
-| F21 | Retry automático          | Tenta até 4x com backoff para erro 529 (serviço sobrecarregado)                       |
-| F22 | Notificação desktop       | `notify-send` ao terminar reprodução e salvamento                                     |
-| F23 | Tray icon                 | Minimiza para bandeja do sistema (pystray)                                            |
-| F24 | Auto-update check         | Verifica atualizações via git ao iniciar (background)                                 |
-| F25 | Preferências persistentes | Voz, velocidade, volume, tema e fonte salvos em `~/.config/tts-app/prefs.json`        |
-| F26 | Atalhos de teclado        | `Ctrl+Enter` falar · `Ctrl+S` salvar · `Ctrl+O` abrir · `Esc` parar                   |
-| F27 | Instalação no sistema     | `make install-system` instala em `/opt/tts-app` com entrada GNOME e comando `tts-app` |
-| F28 | CI/CD                     | GitHub Actions roda testes em cada push/PR                                            |
+| #   | Funcionalidade            | Descrição                                                                                   |
+| --- | ------------------------- | ------------------------------------------------------------------------------------------- |
+| F1  | Entrada de texto          | Área multilinha com undo/redo (Ctrl+Z/Y), contador de caracteres                            |
+| F2  | Seleção de voz            | Dropdown com vozes neurais carregadas dinamicamente via API                                 |
+| F3  | Controle de velocidade    | Slider de -50% a +50%                                                                       |
+| F4  | Controle de volume        | Slider de 0% a 100%                                                                         |
+| F5  | Reprodução direta         | Botão "Falar" gera e reproduz; vira "■ Parar" durante reprodução                            |
+| F6  | Salvar MP3                | Exporta o áudio para arquivo `.mp3`                                                         |
+| F7  | Limpar texto              | Com confirmação quando há conteúdo                                                          |
+| F8  | Checagem de dependências  | Verifica `edge-tts` e `ffplay` uma vez na inicialização                                     |
+| F9  | Abrir arquivo .txt        | Botão 📂 e atalho `Ctrl+O`                                                                  |
+| F10 | Colar clipboard           | Botão 📋 para colar diretamente                                                             |
+| F11 | Histórico de textos       | Últimos 20 textos salvos em `~/.config/tts-app/history.json`                                |
+| F12 | Fila de exportação        | Botão 📤 para exportar múltiplos textos em lote                                             |
+| F13 | Tema claro/escuro         | Toggle ☀️/🌙 com preferência persistente                                                    |
+| F14 | Tamanho de fonte          | Botões A- / A+ no textarea                                                                  |
+| F15 | Filtro de vozes           | Campo de busca + abas de idioma (ALL PT EN ES FR DE JA ZH)                                  |
+| F16 | Vozes recentes            | Últimas 3 vozes usadas fixadas no topo do dropdown                                          |
+| F17 | Indicador de carregamento | "⏳ carregando..." no seletor enquanto API busca vozes                                      |
+| F18 | Barra de progresso        | Progressbar indeterminada durante geração/salvamento                                        |
+| F19 | Detecção de idioma        | Sugere voz automaticamente após 1s digitando (langdetect)                                   |
+| F20 | Texto longo               | Divide em chunks (>4500 chars) e concatena com ffmpeg                                       |
+| F21 | Retry automático          | Tenta até 4x com backoff para erro 529 (serviço sobrecarregado)                             |
+| F22 | Notificação desktop       | `notify-send` ao terminar reprodução e salvamento                                           |
+| F23 | Tray icon                 | Minimiza para bandeja do sistema (pystray)                                                  |
+| F24 | Auto-update check         | Verifica atualizações via git ao iniciar (background)                                       |
+| F25 | Preferências persistentes | Voz, velocidade, volume, pitch, tema, fonte e geometria salvos em `prefs.json`              |
+| F26 | Atalhos de teclado        | `Ctrl+Enter/S/O/P/F/T` · `Esc` parar · `F1` ajuda                                           |
+| F27 | Instalação no sistema     | `make install-system` instala em `/opt/tts-app` com entrada GNOME e comando `tts-app`       |
+| F28 | CI/CD                     | GitHub Actions roda testes + syntax check em cada push/PR (Python 3.10/3.11/3.12)           |
+| F29 | Pausar / Retomar          | `SIGSTOP`/`SIGCONT` no processo ffplay; botão ⏸/▶ visível durante reprodução                |
+| F30 | Repetir último áudio      | Botão 🔁 reproduz `last_audio.mp3` sem regenerar                                            |
+| F31 | Idioma da interface       | Toggle 🇧🇷/🇺🇸 com strings i18n para pt-BR e en-US                                            |
+| F32 | Drag & drop .txt          | Arrastar arquivo `.txt` para a área de texto (tkinterdnd2)                                  |
+| F33 | Cache de vozes            | Lista de vozes salva localmente por 24h (evita chamada de API no startup)                   |
+| F34 | Controle de pitch         | Slider 🎵 de -50 Hz a +50 Hz passado à API e CLI como `--pitch`                             |
+| F35 | Preview de voz            | Botão "▶ Prévia de voz" no seletor fala uma frase de exemplo com a voz selecionada          |
+| F36 | Busca no texto (Ctrl+F)   | Barra inline com highlight, navegação ▲▼ e Esc para fechar                                  |
+| F37 | Dialog de ajuda (F1)      | Lista todos os atalhos de teclado, traduzido pt-BR/en-US                                    |
+| F38 | Escala HiDPI              | Detecta DPI e aplica `tk scaling` automaticamente                                           |
+| F39 | Tema do sistema           | Detecta dark/light mode do GNOME via gsettings no primeiro uso                              |
+| F40 | Geometria persistente     | Tamanho e posição da janela restaurados entre sessões                                       |
+| F41 | Contador de palavras      | Exibe `N chars · M palavras · ~Xs` no rodapé do textarea                                    |
+| F42 | Progresso por chunk       | Status "⏳ Gerando parte N/M" durante textos longos                                         |
+| F43 | Auto-save de rascunho     | Salva texto automaticamente a cada 60s em `draft.txt`; restaura ao reabrir                  |
+| F44 | Arquivos recentes         | Botão 📁 mostra últimos 8 arquivos `.txt` abertos                                           |
+| F45 | Fila avançada             | Formato `texto \| voz \| velocidade%` por linha; progresso real com progressbar; cancelável |
+| F46 | Transcrição (Whisper)     | Botão 🎤 abre janela para transcrever arquivo de áudio ou gravação do microfone             |
+| F47 | Histórico de transcrições | Últimas 10 transcrições salvas em `trans_history.json`; acessível na janela 🎤              |
+| F48 | Indicador de download     | Avisa ao usuário quando o modelo Whisper está sendo baixado pela primeira vez               |
 
 ### Backlog
 
-| #   | Funcionalidade                      | Prioridade |
-| --- | ----------------------------------- | ---------- |
-| B1  | Drag & drop de arquivos .txt        | Média      |
-| B2  | Player com pausa e retrocesso       | Média      |
-| B3  | Empacotamento `.deb` / AppImage     | Alta       |
-| B4  | Suporte a múltiplos idiomas na UI   | Baixa      |
-| B5  | Integração com clipboard automático | Baixa      |
+| #   | Funcionalidade                  | Prioridade |
+| --- | ------------------------------- | ---------- |
+| B1  | Empacotamento `.deb` / AppImage | Alta       |
+| B2  | Player com posição e retrocesso | Média      |
 
 ---
 

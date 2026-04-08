@@ -61,9 +61,11 @@ def api_available() -> bool:
         return False
 
 
-def build_tts_cmd(voice: str, rate: int, text: str, output_path: str) -> List[str]:
+def build_tts_cmd(voice: str, rate: int, text: str, output_path: str, pitch: int = 0) -> List[str]:
     rate_str = f"{rate:+d}%"
-    return ["edge-tts", "--voice", voice, "--rate", rate_str, "--text", text, "--write-media", output_path]
+    pitch_str = f"{pitch:+d}Hz"
+    return ["edge-tts", "--voice", voice, "--rate", rate_str, "--pitch", pitch_str,
+            "--text", text, "--write-media", output_path]
 
 
 def build_play_cmd(path: str, volume: int = 100) -> List[str]:
@@ -77,7 +79,8 @@ def check_executables() -> Dict[str, bool]:
     }
 
 
-def generate_audio(voice: str, rate: int, text: str, output_path: Optional[str] = None) -> Tuple[int, str]:
+def generate_audio(voice: str, rate: int, text: str, output_path: Optional[str] = None,
+                   pitch: int = 0) -> Tuple[int, str]:
     """Gera áudio usando a API edge_tts com retry automático para erro 529.
 
     Retorna (returncode, output_path). returncode=0 em sucesso.
@@ -90,9 +93,10 @@ def generate_audio(voice: str, rate: int, text: str, output_path: Optional[str] 
     if api_available():
         import edge_tts
         rate_str = f"{rate:+d}%"
+        pitch_str = f"{pitch:+d}Hz"
 
         async def _save():
-            comm = edge_tts.Communicate(text, voice, rate=rate_str)
+            comm = edge_tts.Communicate(text, voice, rate=rate_str, pitch=pitch_str)
             await comm.save(output_path)
 
         for attempt, delay in enumerate([0] + _RETRY_DELAYS):
@@ -112,7 +116,7 @@ def generate_audio(voice: str, rate: int, text: str, output_path: Optional[str] 
                 break  # não faz retry em outros erros
 
     # fallback CLI
-    cmd = build_tts_cmd(voice, rate, text, output_path)
+    cmd = build_tts_cmd(voice, rate, text, output_path, pitch=pitch)
     logger.debug("Falling back to CLI: %s", cmd)
     proc = subprocess.run(cmd)
     return proc.returncode, output_path
@@ -181,6 +185,7 @@ def generate_audio_long(
     voice: str, rate: int, text: str,
     output_path: Optional[str] = None,
     progress_callback=None,
+    pitch: int = 0,
 ) -> Tuple[int, str]:
     """Gera áudio para textos longos dividindo em chunks e concatenando com ffmpeg.
 
@@ -188,7 +193,7 @@ def generate_audio_long(
     """
     chunks = split_text(text)
     if len(chunks) == 1:
-        return generate_audio(voice, rate, text, output_path)
+        return generate_audio(voice, rate, text, output_path, pitch=pitch)
 
     tmp_files: List[str] = []
     try:
@@ -198,7 +203,7 @@ def generate_audio_long(
                     progress_callback(i, len(chunks))
                 except Exception:
                     pass
-            rc, tmp = generate_audio(voice, rate, chunk, None)
+            rc, tmp = generate_audio(voice, rate, chunk, None, pitch=pitch)
             if rc != 0:
                 return rc, ""
             tmp_files.append(tmp)

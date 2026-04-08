@@ -43,12 +43,19 @@ logging.basicConfig(
 )
 
 # ── Configuração ──────────────────────────────────────────────────────────────
-CONFIG_DIR      = os.path.expanduser("~/.config/tts-app")
-PREFS_FILE      = os.path.join(CONFIG_DIR, "prefs.json")
-HISTORY_FILE    = os.path.join(CONFIG_DIR, "history.json")
-LAST_AUDIO_FILE = os.path.join(CONFIG_DIR, "last_audio.mp3")
-MAX_HISTORY     = 20
+CONFIG_DIR          = os.path.expanduser("~/.config/tts-app")
+PREFS_FILE          = os.path.join(CONFIG_DIR, "prefs.json")
+HISTORY_FILE        = os.path.join(CONFIG_DIR, "history.json")
+LAST_AUDIO_FILE     = os.path.join(CONFIG_DIR, "last_audio.mp3")
+DRAFT_FILE          = os.path.join(CONFIG_DIR, "draft.txt")
+RECENT_FILES_FILE   = os.path.join(CONFIG_DIR, "recent_files.json")
+TRANS_HISTORY_FILE  = os.path.join(CONFIG_DIR, "trans_history.json")
+MAX_HISTORY         = 20
+MAX_RECENT_FILES    = 8
+MAX_TRANS_HISTORY   = 10
 LONG_TEXT_THRESHOLD = 4500
+# Velocidade média de fala em palavras por minuto para estimativa de duração
+_WPM = 150
 
 # ── i18n ──────────────────────────────────────────────────────────────────────
 _STRINGS = {
@@ -79,6 +86,7 @@ _STRINGS = {
             ("Ctrl+O",     "Abrir .txt"),
             ("Ctrl+P",     "Pausar / Retomar"),
             ("Ctrl+F",     "Buscar no texto"),
+            ("Ctrl+T",     "Transcrever áudio"),
             ("Esc",        "Parar reprodução"),
             ("Ctrl+Z",     "Desfazer"),
             ("Ctrl+Y",     "Refazer"),
@@ -112,6 +120,7 @@ _STRINGS = {
             ("Ctrl+O",     "Open .txt"),
             ("Ctrl+P",     "Pause / Resume"),
             ("Ctrl+F",     "Find in text"),
+            ("Ctrl+T",     "Transcribe audio"),
             ("Esc",        "Stop playback"),
             ("Ctrl+Z",     "Undo"),
             ("Ctrl+Y",     "Redo"),
@@ -145,6 +154,29 @@ def add_to_history(text):
     if text in h: h.remove(text)
     h.insert(0, text)
     _save_json(HISTORY_FILE, h[:MAX_HISTORY])
+
+def load_recent_files() -> list:  return _load_json(RECENT_FILES_FILE, [])
+def add_recent_file(path: str):
+    r = load_recent_files()
+    if path in r: r.remove(path)
+    r.insert(0, path)
+    _save_json(RECENT_FILES_FILE, r[:MAX_RECENT_FILES])
+
+def load_trans_history() -> list:  return _load_json(TRANS_HISTORY_FILE, [])
+def add_trans_history(text: str):
+    h = load_trans_history()
+    h.insert(0, {"text": text, "ts": __import__("time").strftime("%d/%m %H:%M")})
+    _save_json(TRANS_HISTORY_FILE, h[:MAX_TRANS_HISTORY])
+
+def estimate_duration(text: str, rate: int = 0) -> str:
+    """Estima duração do áudio em mm:ss baseado em WPM e velocidade."""
+    words = len(text.split())
+    if words == 0: return ""
+    wpm = _WPM * (1 + rate / 100)
+    secs = int(words / wpm * 60)
+    if secs < 60:
+        return f"~{secs}s"
+    return f"~{secs//60}:{secs%60:02d}min"
 
 # ── Temas ─────────────────────────────────────────────────────────────────────
 def _detect_system_theme() -> str:
@@ -209,6 +241,7 @@ _voices_loaded = False
 _search_frame  = None
 _search_matches: list = []
 _search_idx    = -1
+_pitch_var    = None  # definido na UI; referência antecipada para falar/salvar
 
 def _check_deps_startup():
     global _executables
@@ -305,6 +338,32 @@ def _on_minimize(_e):
     if root.state() == "iconic" and _TRAY_OK and _tray_icon:
         root.after(100, root.withdraw)
 
+# ── Auto-save de rascunho ─────────────────────────────────────────────────────
+_AUTOSAVE_INTERVAL = 60_000  # ms
+
+def _autosave():
+    try:
+        texto = text_box.get("1.0", tk.END)
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        with open(DRAFT_FILE, "w", encoding="utf-8") as f:
+            f.write(texto)
+    except Exception:
+        pass
+    root.after(_AUTOSAVE_INTERVAL, _autosave)
+
+def _restore_draft():
+    """Carrega rascunho salvo se existir e text_box estiver vazio."""
+    try:
+        if not os.path.exists(DRAFT_FILE): return
+        with open(DRAFT_FILE, encoding="utf-8") as f:
+            content = f.read().strip()
+        if content:
+            text_box.insert("1.0", content)
+            _atualizar_contador()
+            status_var.set("📝 Rascunho restaurado")
+    except Exception:
+        pass
+
 # ── Ações ─────────────────────────────────────────────────────────────────────
 def parar():
     global _play_proc, _play_paused
@@ -348,6 +407,7 @@ def falar(_event=None):
         messagebox.showwarning("Aviso", "Digite algum texto primeiro!"); return
     if not _deps_ok(): return
     voz, vel, vol = voz_var.get(), vel_var.get(), vol_var.get()
+    pit = _pitch_var.get() if _pitch_var else 0
 
     # Aviso para texto longo
     chunks = split_text(texto)
@@ -366,9 +426,10 @@ def falar(_event=None):
             if len(chunks) > 1:
                 def _on_progress(cur, total):
                     root.after(0, lambda c=cur, t=total: status_var.set(f"⏳ Gerando parte {c}/{t}..."))
-                rc, out_path = generate_audio_long(voz, vel, texto, None, progress_callback=_on_progress)
+                rc, out_path = generate_audio_long(voz, vel, texto, None,
+                                                   progress_callback=_on_progress, pitch=pit)
             else:
-                rc, out_path = generate_audio(voz, vel, texto, None)
+                rc, out_path = generate_audio(voz, vel, texto, None, pitch=pit)
         except Exception:
             logging.exception("generate_audio failed"); rc, out_path = 1, None
 
@@ -441,12 +502,16 @@ def salvar(_event=None):
     if not path: return
     if not _deps_ok(need_ffplay=False): return
     voz, vel = voz_var.get(), vel_var.get()
+    pit = _pitch_var.get() if _pitch_var else 0
     status_var.set(_s("saving")); root.after(0, _pb_show)
 
     def run():
         try:
-            fn = generate_audio_long if len(split_text(texto)) > 1 else generate_audio
-            rc, tmp = fn(voz, vel, texto, None)
+            chunks_s = split_text(texto)
+            if len(chunks_s) > 1:
+                rc, tmp = generate_audio_long(voz, vel, texto, None, pitch=pit)
+            else:
+                rc, tmp = generate_audio(voz, vel, texto, None, pitch=pit)
         except Exception:
             logging.exception("generate_audio failed on save"); rc = 1
         if rc != 0:
@@ -467,15 +532,52 @@ def limpar():
     n_str = f"0 {_s('chars')}"
     text_box.delete("1.0", tk.END); status_var.set(""); char_var.set(n_str)
 
-def abrir_txt(_event=None):
-    path = filedialog.askopenfilename(filetypes=[("Texto","*.txt"),("Todos","*.*")])
-    if not path: return
+def _carregar_arquivo(path: str):
+    """Carrega um .txt no text_box e registra nos recentes."""
     try:
         with open(path, encoding="utf-8") as f: content = f.read()
         text_box.delete("1.0", tk.END); text_box.insert("1.0", content)
         _atualizar_contador()
+        add_recent_file(path)
+        status_var.set(f"📂 {os.path.basename(path)}")
     except Exception as e:
         messagebox.showerror("Erro", f"Não foi possível abrir:\n{e}")
+
+def abrir_txt(_event=None):
+    path = filedialog.askopenfilename(filetypes=[("Texto","*.txt"),("Todos","*.*")])
+    if not path: return
+    _carregar_arquivo(path)
+
+def mostrar_recentes():
+    """Popup com os últimos arquivos .txt abertos."""
+    recentes = [p for p in load_recent_files() if os.path.exists(p)]
+    if not recentes:
+        messagebox.showinfo("Recentes", "Nenhum arquivo recente."); return
+    pop = tk.Toplevel(root)
+    pop.title("Arquivos Recentes"); pop.configure(bg=T("BG")); pop.geometry("480x260")
+    pop.transient(root); pop.grab_set()
+    reg(tk.Label(pop, text="Arquivos recentes", font=("Segoe UI",10,"bold"),
+                 bg=T("BG"), fg=T("TEXT2")), bg="BG", fg="TEXT2").pack(
+        anchor="w", padx=12, pady=(10,4))
+    fr = reg(tk.Frame(pop, bg=T("BG2"), highlightthickness=1,
+                      highlightbackground=T("ACCENT")),
+             bg="BG2", highlightbackground="ACCENT")
+    fr.pack(fill="both", expand=True, padx=12, pady=(0,6))
+    sb = tk.Scrollbar(fr); sb.pack(side="right", fill="y")
+    lb = tk.Listbox(fr, bg=T("BG2"), fg=T("TEXT"), selectbackground=T("ACCENT"),
+                    font=("Segoe UI",10), relief="flat", bd=0, yscrollcommand=sb.set)
+    for p in recentes:
+        lb.insert(tk.END, f"  {os.path.basename(p)}  —  {os.path.dirname(p)}")
+    lb.pack(fill="both", expand=True); sb.config(command=lb.yview)
+    def abrir():
+        sel = lb.curselection()
+        if not sel: return
+        _carregar_arquivo(recentes[sel[0]]); pop.destroy()
+    lb.bind("<Double-Button-1>", lambda e: abrir())
+    reg(tk.Button(pop, text="Abrir", command=abrir, bg=T("ACCENT"), fg="white",
+                  font=("Segoe UI",10,"bold"), relief="flat", padx=20, pady=6,
+                  cursor="hand2"), bg="ACCENT").pack(pady=(0,10))
+    pop.bind("<Escape>", lambda e: pop.destroy())
 
 def colar_clipboard():
     try:
@@ -511,50 +613,95 @@ def mostrar_historico():
         bg="ACCENT").pack(pady=(0,10))
 
 def mostrar_fila():
-    """Janela de exportação em lote."""
+    """Janela de exportação em lote com voz/velocidade por item e barra de progresso real."""
     win = tk.Toplevel(root)
-    win.title("Fila de Exportação"); win.configure(bg=T("BG")); win.geometry("500x420")
-    win.transient(root)
-    reg(tk.Label(win, text="Fila de Exportação em Lote", font=("Segoe UI",11,"bold"),
-                 bg=T("BG"), fg=T("TEXT")), bg="BG", fg="TEXT").pack(padx=12, pady=(10,4), anchor="w")
-    reg(tk.Label(win, text="Digite um texto por linha e exporte todos como MP3.",
-                 font=("Segoe UI",9), bg=T("BG"), fg=T("TEXT2")), bg="BG", fg="TEXT2").pack(padx=12, anchor="w")
+    win.title("Fila de Exportação"); win.configure(bg=T("BG")); win.geometry("540x500")
+    win.resizable(True, True); win.transient(root)
 
-    ta = tk.Text(win, height=10, font=("Segoe UI",10), bg=T("BG2"), fg=T("TEXT"),
+    reg(tk.Label(win, text="Fila de Exportação em Lote", font=("Segoe UI",11,"bold"),
+                 bg=T("BG"), fg=T("TEXT")), bg="BG", fg="TEXT").pack(padx=12, pady=(10,2), anchor="w")
+    reg(tk.Label(win, text="Formato: texto | voz | velocidade%   (voz e velocidade opcionais)",
+                 font=("Segoe UI",8), bg=T("BG"), fg=T("TEXT2")),
+        bg="BG", fg="TEXT2").pack(padx=12, anchor="w")
+    reg(tk.Label(win, text="Ex:  Olá mundo | pt-BR-FranciscaNeural | +10%",
+                 font=("Segoe UI",8,"italic"), bg=T("BG"), fg=T("TEXT2")),
+        bg="BG", fg="TEXT2").pack(padx=12, pady=(0,4), anchor="w")
+
+    ta = tk.Text(win, height=9, font=("Segoe UI",10), bg=T("BG2"), fg=T("TEXT"),
                  insertbackground=T("ACCENT2"), relief="flat", bd=0, padx=8, pady=8,
                  wrap="word", selectbackground=T("ACCENT"))
     reg(ta, bg="BG2", fg="TEXT", insertbackground="ACCENT2", selectbackground="ACCENT")
-    ta.pack(fill="both", expand=True, padx=12, pady=6)
+    ta.pack(fill="both", expand=True, padx=12, pady=4)
 
+    # Progresso real com progressbar
     prog_var = tk.StringVar(value="")
     reg(tk.Label(win, textvariable=prog_var, font=("Segoe UI",9), bg=T("BG"), fg=T("GREEN")),
         bg="BG", fg="GREEN").pack(padx=12, anchor="w")
+    queue_pb = ttk.Progressbar(win, mode="determinate", style="TTS.Horizontal.TProgressbar")
+    queue_pb.pack(fill="x", padx=12, pady=(0,4))
+
+    _running = {"stop": False}
+
+    def _parse_line(line: str):
+        """Retorna (text, voz, vel_int) de uma linha da fila."""
+        parts = [p.strip() for p in line.split("|")]
+        text = parts[0]
+        voice = parts[1] if len(parts) > 1 and parts[1] else voz_var.get()
+        vel_raw = parts[2] if len(parts) > 2 and parts[2] else "0%"
+        try:
+            vel = int(vel_raw.replace("%", "").replace("+", ""))
+        except ValueError:
+            vel = vel_var.get()
+        return text, voice, vel
 
     def exportar():
         lines = [l.strip() for l in ta.get("1.0", tk.END).splitlines() if l.strip()]
         if not lines:
-            messagebox.showwarning("Aviso", "Nenhum texto na fila."); return
+            messagebox.showwarning("Aviso", "Nenhum texto na fila.", parent=win); return
         folder = filedialog.askdirectory(title="Escolha a pasta de destino")
         if not folder: return
-        voz, vel = voz_var.get(), vel_var.get()
+        _running["stop"] = False
+        queue_pb["maximum"] = len(lines); queue_pb["value"] = 0
+        btn_exp.config(state="disabled"); btn_stop.config(state="normal")
 
         def run():
-            for i, txt in enumerate(lines, 1):
-                root.after(0, lambda i=i: prog_var.set(f"⏳ Exportando {i}/{len(lines)}..."))
+            pit = _pitch_var.get() if _pitch_var else 0
+            for i, raw in enumerate(lines, 1):
+                if _running["stop"]:
+                    root.after(0, lambda: [prog_var.set("⏹ Cancelado"),
+                        btn_exp.config(state="normal"), btn_stop.config(state="disabled")]); return
+                text, voice, vel = _parse_line(raw)
+                root.after(0, lambda i=i, v=voice: prog_var.set(
+                    f"⏳ {i}/{len(lines)} — {v.split('-')[-1]}"))
                 out = os.path.join(folder, f"audio_{i:03d}.mp3")
-                rc, tmp = generate_audio(voz, vel, txt, None)
+                rc, tmp = generate_audio(voice, vel, text, None, pitch=pit)
                 if rc == 0:
                     shutil.move(tmp, out)
+                    root.after(0, lambda i=i: [
+                        queue_pb.__setitem__("value", i)])
                 else:
-                    root.after(0, lambda i=i: prog_var.set(f"❌ Falha no item {i}"))
-                    return
-            root.after(0, lambda: [prog_var.set(f"✅ {len(lines)} arquivos exportados!"),
-                                   _notify("TTS App", f"{len(lines)} arquivos exportados para {folder}")])
+                    root.after(0, lambda i=i: [
+                        prog_var.set(f"❌ Falha no item {i}"),
+                        btn_exp.config(state="normal"), btn_stop.config(state="disabled")]); return
+            root.after(0, lambda: [
+                prog_var.set(f"✅ {len(lines)} arquivos exportados!"),
+                btn_exp.config(state="normal"), btn_stop.config(state="disabled"),
+                _notify("TTS App", f"{len(lines)} arquivos exportados para {folder}")])
         threading.Thread(target=run, daemon=True).start()
 
-    reg(tk.Button(win, text="📤 Exportar Tudo", command=exportar, bg=T("ACCENT"), fg="white",
-                  font=("Segoe UI",10,"bold"), relief="flat", padx=20, pady=8, cursor="hand2"),
-        bg="ACCENT").pack(pady=(4,12))
+    def parar_fila():
+        _running["stop"] = True
+
+    btn_row = reg(tk.Frame(win, bg=T("BG")), bg="BG"); btn_row.pack(pady=(0,12))
+    btn_exp = reg(tk.Button(btn_row, text="📤 Exportar Tudo", command=exportar,
+                            bg=T("ACCENT"), fg="white", font=("Segoe UI",10,"bold"),
+                            relief="flat", padx=20, pady=8, cursor="hand2"), bg="ACCENT")
+    btn_exp.pack(side="left", padx=(0,8))
+    btn_stop = reg(tk.Button(btn_row, text="⏹ Cancelar", command=parar_fila,
+                             bg=T("BG2"), fg=T("TEXT2"), font=("Segoe UI",10),
+                             relief="flat", padx=12, pady=8, cursor="hand2",
+                             state="disabled"), bg="BG2", fg="TEXT2")
+    btn_stop.pack(side="left")
 
 
 def mostrar_transcricao():
@@ -729,8 +876,16 @@ def mostrar_transcricao():
 
         def run():
             try:
+                import whisper as _w
+                model_name = model_var.get()
+                # Verificar se o modelo já está em cache
+                cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "whisper")
+                model_file = os.path.join(cache_dir, f"{model_name}.pt")
+                if not os.path.exists(model_file):
+                    root.after(0, lambda: trans_status.set(
+                        f"⬇️  Baixando modelo '{model_name}'... (pode demorar)"))
                 lang = lang_var.get() or None
-                text = transcribe_audio(path, model_name=model_var.get(), language=lang)
+                text = transcribe_audio(path, model_name=model_name, language=lang)
                 root.after(0, lambda: _mostrar_resultado(text))
             except Exception as exc:
                 root.after(0, lambda: [
@@ -773,6 +928,7 @@ def mostrar_transcricao():
         trans_status.set(f"✅ {len(text)} chars · {len(text.split())} palavras")
         res_box.delete("1.0", tk.END)
         res_box.insert("1.0", text)
+        add_trans_history(text)
         _notify("TTS App", "Transcrição concluída.")
 
     # ── Ações do resultado ─────────────────────────────────────────────────────
@@ -792,7 +948,39 @@ def mostrar_transcricao():
             _atualizar_contador()
             win.destroy()
 
-    for lbl, cmd in [("📋 Copiar", _copiar), ("✏ Usar no TTS", _usar_no_tts)]:
+    def _ver_historico_trans():
+        hist = load_trans_history()
+        if not hist:
+            messagebox.showinfo("Histórico", "Nenhuma transcrição salva ainda.", parent=win); return
+        pop = tk.Toplevel(win)
+        pop.title("Histórico de Transcrições"); pop.configure(bg=T("BG"))
+        pop.geometry("480x300"); pop.transient(win); pop.grab_set()
+        reg(tk.Label(pop, text="Transcrições recentes", font=("Segoe UI",10,"bold"),
+                     bg=T("BG"), fg=T("TEXT2")), bg="BG", fg="TEXT2").pack(
+            anchor="w", padx=12, pady=(10,4))
+        fr = reg(tk.Frame(pop, bg=T("BG2"), highlightthickness=1,
+                          highlightbackground=T("ACCENT")),
+                 bg="BG2", highlightbackground="ACCENT")
+        fr.pack(fill="both", expand=True, padx=12, pady=(0,6))
+        sb = tk.Scrollbar(fr); sb.pack(side="right", fill="y")
+        lb = tk.Listbox(fr, bg=T("BG2"), fg=T("TEXT"), selectbackground=T("ACCENT"),
+                        font=("Segoe UI",9), relief="flat", bd=0, yscrollcommand=sb.set)
+        for item in hist:
+            lb.insert(tk.END, f"[{item['ts']}]  {item['text'][:80].replace(chr(10),' ')}")
+        lb.pack(fill="both", expand=True); sb.config(command=lb.yview)
+        def usar():
+            sel = lb.curselection()
+            if not sel: return
+            res_box.delete("1.0", tk.END)
+            res_box.insert("1.0", hist[sel[0]]["text"])
+            pop.destroy()
+        lb.bind("<Double-Button-1>", lambda e: usar())
+        reg(tk.Button(pop, text="Usar", command=usar, bg=T("ACCENT"), fg="white",
+                      font=("Segoe UI",10,"bold"), relief="flat", padx=20, pady=6,
+                      cursor="hand2"), bg="ACCENT").pack(pady=(0,10))
+
+    for lbl, cmd in [("📋 Copiar", _copiar), ("✏ Usar no TTS", _usar_no_tts),
+                     ("🕘 Histórico", _ver_historico_trans)]:
         reg(tk.Button(act_frame, text=lbl, command=cmd, bg=T("BG2"), fg=T("TEXT2"),
                       font=("Segoe UI",10,"bold"), relief="flat", padx=14, pady=6,
                       cursor="hand2"), bg="BG2", fg="TEXT2").pack(side="left", padx=(0,8))
@@ -809,8 +997,10 @@ def _atualizar_contador(_event=None):
     texto = text_box.get("1.0", tk.END).strip()
     n = len(texto)
     words = len(texto.split()) if texto else 0
+    dur = estimate_duration(texto, vel_var.get()) if texto else ""
+    dur_str = f" · {dur}" if dur else ""
     char_var.set(
-        f"{n} {_s('chars')} · {words} {_s('words')}"
+        f"{n} {_s('chars')} · {words} {_s('words')}{dur_str}"
         + (_s("chars_long") if n > LONG_TEXT_THRESHOLD else "")
     )
 
@@ -1022,6 +1212,28 @@ class VozSelector(tk.Frame):
             r.insert(0, val); _prefs["recent_voices"] = r[:3]; save_prefs(recent_voices=r[:3])
             self.popup.destroy(); self.popup = None
 
+        # Botão preview de voz
+        def _preview_voice():
+            sel = lb.curselection()
+            voice = _filtered[sel[0]] if sel else self.variable.get()
+            if not voice: return
+            def _run():
+                try:
+                    rc, tmp = generate_audio(voice, 0, "Olá, esta é uma prévia da voz.", None)
+                    if rc == 0:
+                        import subprocess as _sp
+                        _sp.Popen(build_play_cmd(tmp), stderr=_sp.DEVNULL)
+                except Exception:
+                    pass
+            threading.Thread(target=_run, daemon=True).start()
+
+        tk.Frame(outer, bg=T("ACCENT"), height=1).pack(fill="x")
+        preview_row = tk.Frame(outer, bg=T("BG2")); preview_row.pack(fill="x", padx=6, pady=4)
+        tk.Button(preview_row, text="▶ Prévia de voz", command=_preview_voice,
+                  bg=T("BG2"), fg=T("ACCENT2"), font=("Segoe UI",9,"bold"),
+                  relief="flat", padx=10, pady=4, cursor="hand2",
+                  activebackground=T("BG2"), activeforeground=T("ACCENT")).pack(side="left")
+
         lb.bind("<<ListboxSelect>>", on_select)
         lb.bind("<Return>", on_select)
         filter_var.trace_add("write", lambda *_: render(filter_var.get()))
@@ -1084,7 +1296,7 @@ reg(tk.Label(th, text="Texto", font=("Segoe UI",9,"bold"), bg=T("BG2"), fg=T("TE
     bg="BG2", fg="TEXT2").pack(side="left")
 
 for icon, cmd in [("📋", colar_clipboard), ("📂", abrir_txt), ("🕘", mostrar_historico),
-                   ("📤", mostrar_fila), ("🎤", mostrar_transcricao),
+                   ("📁", mostrar_recentes), ("📤", mostrar_fila), ("🎤", mostrar_transcricao),
                    ("A-", lambda: _ajustar_fonte(-1)), ("A+", lambda: _ajustar_fonte(+1))]:
     reg(tk.Button(th, text=icon, command=cmd, bg=T("BG2"), fg=T("TEXT2"),
                   font=("Segoe UI", 9 if len(icon)==1 else 8), relief="flat", cursor="hand2",
@@ -1153,6 +1365,19 @@ reg(tk.Scale(right, from_=0, to=100, orient="horizontal", variable=vol_var, leng
              highlightthickness=0, bd=0, showvalue=False, command=_upd_vol),
     bg="BG", fg="TEXT", troughcolor="BG2", activebackground="ACCENT2").pack()
 
+reg(tk.Label(right, text="🎵 Pitch", font=("Segoe UI",9,"bold"), bg=T("BG"), fg=T("TEXT2")),
+    bg="BG", fg="TEXT2").pack(anchor="w", pady=(6,0))
+_pitch_var = tk.IntVar(value=_prefs.get("pitch", 0))
+pitch_label = reg(tk.Label(right, text="0 Hz", font=("Segoe UI",9), bg=T("BG"), fg=T("ACCENT2"), width=5),
+                  bg="BG", fg="ACCENT2"); pitch_label.pack(anchor="e")
+def _upd_pitch(v):
+    val = int(float(v)); pitch_label.config(text=f"{val:+d}Hz" if val != 0 else "0 Hz")
+reg(tk.Scale(right, from_=-50, to=50, orient="horizontal", variable=_pitch_var, length=160,
+             bg=T("BG"), fg=T("TEXT"), troughcolor=T("BG2"), activebackground=T("ACCENT2"),
+             highlightthickness=0, bd=0, showvalue=False, command=_upd_pitch),
+    bg="BG", fg="TEXT", troughcolor="BG2", activebackground="ACCENT2").pack()
+_upd_pitch(_pitch_var.get())
+
 btn_frame = reg(tk.Frame(root, bg=T("BG")), bg="BG"); btn_frame.pack(pady=12, padx=20, fill="x")
 reg(tk.Button(btn_frame, text="🗑 Limpar", command=limpar, bg=T("BG2"), fg=T("TEXT2"),
               font=("Segoe UI",10), relief="flat", padx=15, pady=8, cursor="hand2"),
@@ -1187,6 +1412,7 @@ root.bind("<Control-s>", salvar)
 root.bind("<Control-o>", abrir_txt)
 root.bind("<Control-f>", _mostrar_busca)
 root.bind("<Control-p>", lambda e: pausar_retomar())
+root.bind("<Control-t>", lambda e: mostrar_transcricao())
 root.bind("<F1>", _mostrar_ajuda)
 root.bind("<Escape>", lambda e: parar())
 root.bind("<Control-z>", lambda e: text_box.edit_undo())
@@ -1196,7 +1422,9 @@ root.bind("<Unmap>", _on_minimize)
 
 def _on_close():
     save_prefs(voice=voz_var.get(), speed=vel_var.get(), volume=vol_var.get(),
+               pitch=_pitch_var.get() if _pitch_var else 0,
                theme=_theme_name, font_size=_font_size, geometry=root.geometry())
+    _autosave()
     if _tray_icon: _tray_icon.stop()
     root.destroy()
 root.protocol("WM_DELETE_WINDOW", _on_close)
@@ -1213,6 +1441,10 @@ def _bg_startup():
     _check_update()
 
 threading.Thread(target=_bg_startup, daemon=True).start()
+
+# Restaurar rascunho e iniciar auto-save
+root.after(200, _restore_draft)
+root.after(_AUTOSAVE_INTERVAL, _autosave)
 
 # Iniciar tray
 if _TRAY_OK:

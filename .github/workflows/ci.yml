@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main, feature/pr-ready ]
+    branches: [main, feature/pr-ready]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
   test:
@@ -14,18 +14,23 @@ jobs:
         python-version: [3.10, 3.11, 3.12]
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ matrix.python-version }}
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
 
-    - name: Install system dependencies
-      run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
-    - name: Install Python deps and run tests
-      run: |
-        make install
-        export PATH="${GITHUB_WORKSPACE}/.venv/bin:$PATH"
-        PYTHONPATH='.' .venv/bin/pytest -q
+      - name: Install Python deps and run tests
+        run: |
+          make install
+          export PATH="${GITHUB_WORKSPACE}/.venv/bin:$PATH"
+          PYTHONPATH='.' .venv/bin/pytest -q
+
+      - name: Syntax check
+        run: |
+          .venv/bin/python -m py_compile main.py tts_utils.py
+          echo "Syntax OK"
